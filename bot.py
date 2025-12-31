@@ -26,30 +26,31 @@ dp = Dispatcher()
 
 def get_scoped_credentials():
     if not GOOGLE_CREDS_JSON:
-        logging.error("ПОМИЛКА: Змінна GOOGLE_CREDS_JSON порожня!")
+        logging.error("Змінна GOOGLE_CREDS_JSON порожня!")
         return None
     
     try:
-        scopes = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        
-        # Очищаємо текст від можливих зайвих пробілів або лапок по краях
+        # 1. Прибираємо зайві лапки, які Railway іноді додає навколо всього тексту
         raw_json = GOOGLE_CREDS_JSON.strip()
-        if raw_json.startswith("'") or raw_json.startswith('"'):
+        if raw_json.startswith('"') and raw_json.endswith('"'):
             raw_json = raw_json[1:-1]
-
+        
+        # 2. Декодуємо JSON
         creds_info = json.loads(raw_json)
         
-        # Виправляємо ключ
+        # 3. ВИПРАВЛЯЄМО КЛЮЧ (саме тут зазвичай помилка JWT)
         if "private_key" in creds_info:
-            # Видаляємо можливі лапки всередині самого ключа та виправляємо переноси
-            fixed_key = creds_info["private_key"].replace("\\n", "\n")
-            creds_info["private_key"] = fixed_key
+            # Замінюємо подвійні слеші на справжні переноси
+            key = creds_info["private_key"]
+            key = key.replace("\\n", "\n")
+            # Видаляємо випадкові пробіли навколо ключів
+            creds_info["private_key"] = key.strip()
             
+        scopes = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         return Credentials.from_service_account_info(creds_info, scopes=scopes)
     except Exception as e:
         logging.error(f"Помилка авторизації: {e}")
         return None
-
 # Створюємо менеджер асинхронних з'єднань
 agcm = gspread_asyncio.AsyncioGspreadClientManager(get_scoped_credentials)
 
