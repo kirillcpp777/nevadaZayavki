@@ -26,24 +26,28 @@ dp = Dispatcher()
 
 def get_scoped_credentials():
     if not GOOGLE_CREDS_JSON:
-        logging.error("ПОМИЛКА: Змінна GOOGLE_CREDS_JSON не знайдена!")
+        logging.error("ПОМИЛКА: Змінна GOOGLE_CREDS_JSON порожня!")
         return None
     
     try:
         scopes = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         
-        # Завантажуємо JSON з тексту
-        creds_info = json.loads(GOOGLE_CREDS_JSON)
+        # Очищаємо текст від можливих зайвих пробілів або лапок по краях
+        raw_json = GOOGLE_CREDS_JSON.strip()
+        if raw_json.startswith("'") or raw_json.startswith('"'):
+            raw_json = raw_json[1:-1]
+
+        creds_info = json.loads(raw_json)
         
-        # ВИПРАВЛЕННЯ: Railway може некоректно обробляти символи \n.
-        # Цей рядок замінює подвійні слеші на справжні переноси рядка.
+        # Виправляємо ключ
         if "private_key" in creds_info:
-            creds_info["private_key"] = creds_info["private_key"].replace("\\n", "\n")
+            # Видаляємо можливі лапки всередині самого ключа та виправляємо переноси
+            fixed_key = creds_info["private_key"].replace("\\n", "\n")
+            creds_info["private_key"] = fixed_key
             
-        creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
-        return creds
+        return Credentials.from_service_account_info(creds_info, scopes=scopes)
     except Exception as e:
-        logging.error(f"Помилка авторизації Google: {e}")
+        logging.error(f"Помилка авторизації: {e}")
         return None
 
 # Створюємо менеджер асинхронних з'єднань
