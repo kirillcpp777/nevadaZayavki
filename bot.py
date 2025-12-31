@@ -1,34 +1,42 @@
 import asyncio
 import logging
 import os
+import json
 from datetime import datetime
 from dotenv import load_dotenv
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import CommandStart
 from aiogram.enums import ParseMode
-import gspread_asyncio  # Используем асинхронную библиотеку
+import gspread_asyncio
 from google.oauth2.service_account import Credentials
 
 load_dotenv()
 
-# Настройки
+# Налаштування
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 SPREADSHEET_ID = os.getenv("SPREADSHEET_ID")
-SERVICE_ACCOUNT_FILE = os.getenv("SERVICE_ACCOUNT_FILE").strip()
+# Тепер беремо вміст JSON прямо з тексту змінної
+GOOGLE_CREDS_JSON = os.getenv("GOOGLE_CREDS_JSON")
 
 logging.basicConfig(level=logging.INFO)
 
 bot = Bot(token=TELEGRAM_TOKEN)
 dp = Dispatcher()
 
-# --- Настройка Google Sheets ---
+# --- Налаштування Google Sheets без використання файлів ---
 def get_scoped_credentials():
+    if not GOOGLE_CREDS_JSON:
+        logging.error("ПОМИЛКА: Змінна GOOGLE_CREDS_JSON не знайдена в Railway!")
+        return None
+    
     scopes = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=scopes)
+    # Перетворюємо текст змінної назад у словник (dict)
+    creds_info = json.loads(GOOGLE_CREDS_JSON)
+    creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
     return creds
 
-# Создаем менеджер асинхронных соединений
+# Створюємо менеджер асинхронних з'єднань
 agcm = gspread_asyncio.AsyncioGspreadClientManager(get_scoped_credentials)
 
 async def append_to_sheet(username, number, links):
@@ -45,7 +53,7 @@ async def append_to_sheet(username, number, links):
         await ws.append_row([now, number, " | ".join(links)])
         return "OFFERS"
 
-# --- Логика парсинга ---
+# --- Логіка парсингу ---
 def parse_message(text):
     words = text.split()
     number, username, tiktok_links = None, None, []
@@ -59,13 +67,13 @@ def parse_message(text):
             username = word
     return username, number, tiktok_links
 
-# --- Обработчики ---
+# --- Обробники ---
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message):
     await message.answer(
         "<b>NEVADA TRAFFIC | РЕГИСТРАЦИЯ ЗАЯВКИ</b>\n"
         "──────────────────────────\n"
-        "Бот готов к приему ссылок ✅\n\n"
+        "Бот запущен и готов к работе ✅\n\n"
         "<b>Формат:</b>\n"
         "<code>[имя] [число] [tiktok ссылки]</code>\n\n",
         parse_mode=ParseMode.HTML
@@ -76,22 +84,22 @@ async def handle_message(message: types.Message):
     if not message.text or message.text.startswith("/"):
         return
 
+    logging.info(f"Отримано текст: {message.text}")
     username, number, links = parse_message(message.text)
     
     if number is None or not links:
-        await message.answer("❌ <b>Ошибка:</b> Неверный формат. Нужно число и хотя бы одна ссылка TikTok.")
+        await message.answer("❌ <b>Ошибка:</b> Неверный формат данных.")
         return
 
-    status_msg = await message.answer("⏳ <i>Запись в таблицу...</i>", parse_mode=ParseMode.HTML)
+    status_msg = await message.answer("⏳ <i>Запись данных...</i>", parse_mode=ParseMode.HTML)
 
     try:
-        # Вызываем асинхронную функцию записи
         target = await append_to_sheet(username, number, links)
 
         res_text = (
             f"✅ <b>УСПЕШНО ЗАПИСАНО</b>\n"
             f"──────────────────────────\n"
-            f"📂 <b>Лист:</b> <code>{target}</code>\n"
+            f"📂 <b>Раздел:</b> <code>{target}</code>\n"
             f"🔢 <b>Число:</b> <code>{number}</code>\n"
             f"🔗 <b>Ссылок:</b> <code>{len(links)}</code>\n"
             f"──────────────────────────\n"
@@ -101,10 +109,10 @@ async def handle_message(message: types.Message):
         
     except Exception as e:
         logging.error(f"Spreadsheet error: {e}")
-        await status_msg.edit_text("❌ <b>Ошибка доступа к таблице.</b>\nОбратитесь к администратору.")
+        await status_msg.edit_text(f"❌ <b>Ошибка записи:</b>\n{str(e)}", parse_mode=ParseMode.HTML)
 
 async def main():
-    logging.info("Запуск polling...")
+    logging.info("Бот запущен...")
     try:
         await bot.delete_webhook(drop_pending_updates=True)
         await dp.start_polling(bot)
