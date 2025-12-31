@@ -1,0 +1,13 @@
+{
+  "type": "service_account",
+  "project_id": "nevada-sheets",
+  "private_key_id": "92a7894f3b1564ef749aa649fcbfdc7c38f8e0be",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCWFscnHD2CG68Q\n6delFXDWcU0FpIKatq2F0pise25pGoVYIsPOhTIkg/JmUKqYcEla02GhzvFC/sOV\nRrvcrQ3byMk3+pEjjXLW3rerx6iJY6DCWR3ewsAV9HIMXZBnDAvFN1+zy9TyAyI+\neniw0/4Aeq38HZkDAsllBkxGZGVSb4GV9KEFAa5rMHEtePnV6iY/3za1Kyk0xTp3\nYcNZowuLCpk1f5zv+xoVG7FF0wg+r3jrBF0XxRsjdua9/NLZuUesfaBmXF2XDCL+\nDMum4sOuSluc8iUgNqoo7qJ8t7wPbAjrUfdspy2cX82p9pV94Pm7iVg4yjqsGxGH\n35Vg8fMbAgMBAAECggEAAaSnMoTrIXkHHiLJQxvse9SKuNSXv3TfincHR+AkEc+C\nBTiAN0sbBO5S4Y7hh0C3dOCakYhv+MFMR96Z4O0eGTlmBpBeNWrvhm2yyhUqAbMP\nCAGsw4sTSko+U2dU1OP7XwHfsNq67pldLxztJFZ10fCF5hw22CMYLFx4yk6AE3pz\nvpw+ZcCWpKb1bkv0VZx/qn1qjhqu6f21qzHbFAOmuX9a5up5JsB44e0BJOHA2YJi\nL1Dd+xpD9LekCr6TRDM0WBjTMtzJ0S26r0sz3iJUtuVZ8rbaonozxA5S7Dpm9+hF\nIHOEmS2IccoI+V99iWXoRyeY25oAGGAFcca373BOLQKBgQDPxRZagkdB2FwzAx5i\nFl1JCYp815a8pYffjwr1yLsVFdn35w2uBCBjLc0KqFvpuGpkNrE/1uYifLn0du9B\nL++F1XgkwN+VqPZRrOzOE4wE2TTkuW5OH57qyWiPO7bheVkKnnNF5qVqMvw3vkEB\nX6BVlF1RQpiCJQFk8IHZdNpX5wKBgQC47fOAfbz1fytFY3te/pWBstKojcBNonZi\nnN5JmTV69C4rHFwlEuEWvT7tTQt2jxtEQ+p3tisgQvrB+Q01VWqn3WIk4OX4pO0D\ncDTOLh3kCVSsNMGegrPY+GDMO7a/t1lytvbwEi4j/O5I4s1WbrrHz3H0Vmaic29e\nhonmrnWUrQKBgEcvaYc9F5jxvjUkHmbQ7sk1YaOAYf7kX/cylTi8u4xv3ixXl5JF\ni6svaA78u/EJ5DnNm1EaGeM7BKNDlJmrCM+74dwF0RT/vNUjAEdi3xhSKxMqjSZr\nIxGiTBa3COObpexDeY87hPUr3spifvcvgkmP+aD7xjDg6Odil7qflKeFAoGAWWvm\nVPl4B5XIjLMAEv0zuhWIO6zfkiq+6AxGiHwnGh88u+fovpyUbvRvmzuoEVo9qxLU\nK7LQw7bfnjAZrPJysl0gegit6z+ExCbbwd8W4Q+J/AM+pLE62e2wkNFHGwlDnW7P\nlWKVIR3K8z+IXwUIGFo9FhM5adA7yA9yWzN887kCgYEAw6Xl+jKmcwbf3VRta7GT\nBKlt/hnzGY+xLS6GYNFuS1qgxUl7Qk7WQU9mzJFgRXFo7DINWOivDYaeVYJr5hqE\nlpmcMqxvjXUFLv/R+7Sm6hf8UcwWg50imod/gwa2erA7Yxoa/nSAGMIvykEypW/X\naLZ48ehuDlsmZAcHX5KaAcc=\n-----END PRIVATE KEY-----\n",
+  "client_email": "bot-sheets-access@nevada-sheets.iam.gserviceaccount.com",
+  "client_id": "111347747845310297070",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/bot-sheets-access%40nevada-sheets.iam.gserviceaccount.com",
+  "universe_domain": "googleapis.com"
+}

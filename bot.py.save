@@ -1,0 +1,143 @@
+import asyncio
+import logging
+import re
+from datetime import datetime
+from aiogram import Bot, Dispatcher, types
+from aiogram.filters import Command
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
+
+# ============================================
+# НАЛАШТУВАННЯ - ЗАПОВНИ ЦІ ДАНІ
+# ============================================
+
+# Токен твого Telegram-бота (отримай у @BotFather)
+TELEGRAM_TOKEN = "ТВІЙ_ТОКЕН_СЮДИ"
+
+# ID твоєї Google Sheets таблиці (з URL таблиці)
+SPREADSHEET_ID = "ТВІЙ_ID_ТАБЛИЦІ_СЮДИ"
+
+# Шлях до JSON-файлу з ключами Service Account
+SERVICE_ACCOUNT_FILE = "твій-файл-ключів.json"
+
+# ============================================
+# НАЛАШТУВАННЯ ЗАВЕРШЕНО
+# ============================================
+
+# Логування
+logging.basicConfig(level=logging.INFO)
+
+# Ініціалізація бота
+bot = Bot(token=TELEGRAM_TOKEN)
+dp = Dispatcher()
+
+# Підключення до Google Sheets
+def get_sheets_client():
+    scope = [
+        "https://spreadsheets.google.com/feeds",
+        "https://www.googleapis.com/auth/drive"
+    ]
+    creds = ServiceAccountCredentials.from_json_keyfile_name(SERVICE_ACCOUNT_FILE, scope)
+    client = gspread.authorize(creds)
+    return client
+
+# Отримання таблиці
+def get_spreadsheet():
+    client = get_sheets_client()
+    return client.open_by_key(SPREADSHEET_ID)
+
+# Парсинг повідомлення
+def parse_message(text):
+    words = text.split()
+    
+    number = None
+    username = None
+    tiktok_links = []
+    
+    for word in words:
+        # Перевірка на TikTok посилання
+        if "https://" in word and "tiktok.com" in word:
+            tiktok_links.append(word)
+        # Перевірка на число
+        elif word.isdigit():
+            if number is None:  # Беремо тільки перше число
+                number = int(word)
+        # Перевірка на username (не число, не посилання)
+        elif "https://" not in word and not word.isdigit():
+            if username is None:  # Беремо тільки перший username
+                username = word
+    
+    return username, number, tiktok_links
+
+# Запис у TEAM
+def write_to_team(username, number, links):
+    sheet = get_spreadsheet()
+    team_sheet = sheet.worksheet("TEAM")
+    
+    links_str = " | ".join(links)
+    team_sheet.append_row([username, number, links_str])
+
+# Запис у OFFERS
+def write_to_offers(number, links):
+    sheet = get_spreadsheet()
+    offers_sheet = sheet.worksheet("OFFERS")
+    
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    links_str = " | ".join(links)
+    offers_sheet.append_row([now, number, links_str])
+
+# Обробка команди /start
+@dp.message(Command("start"))
+async def cmd_start(message: types.Message):
+    await message.answer(
+        "👋 Привіт! Я бот для запису TikTok-посилань.\n\n"
+        "📝 Надішли мені повідомлення з:\n"
+        "• Username (для TEAM)\n"
+        "• Номер\n"
+        "• TikTok-посилання\n\n"
+        "Приклади:\n"
+        "🔹 roma 1 https://tiktok.com/@roma\n"
+        "🔹 2 https://tiktok.com/@user (без username)"
+    )
+
+# Обробка текстових повідомлень
+@dp.message()
+async def handle_message(message: types.Message):
+    text = message.text
+    username, number, tiktok_links = parse_message(text)
+    
+    # Перевірка мінімальних вимог
+    if number is None or len(tiktok_links) == 0:
+        await message.answer("❌ Повідомлення не відповідає вимогам.\n\nПотрібно: номер + хоча б одне TikTok-посилання")
+        return
+    
+    try:
+        # Визначення типу запису
+        if username:
+            # Запис у TEAM
+            write_to_team(username, number, tiktok_links)
+            record_type = "TEAM"
+        else:
+            # Запис у OFFERS
+            write_to_offers(number, tiktok_links)
+            record_type = "OFFERS"
+        
+        # Підтвердження
+        await message.answer(
+            f"✅ Записано\n\n"
+            f"📋 Тип: {record_type}\n"
+            f"🔢 Номер: {number}\n"
+            f"🔗 Посилань: {len(tiktok_links)}"
+        )
+        
+    except Exception as e:
+        logging.error(f"Помилка запису: {e}")
+        await message.answer(f"❌ Помилка при записі в таблицю.\n\nДеталі: {str(e)}")
+
+# Запуск бота
+async def main():
+    logging.info("Бот запущено!")
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())
