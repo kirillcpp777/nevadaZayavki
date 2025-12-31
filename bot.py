@@ -5,14 +5,14 @@ from datetime import datetime
 from dotenv import load_dotenv
 
 from aiogram import Bot, Dispatcher, types
-from aiogram.filters import Command
+from aiogram.filters import CommandStart
 from aiogram.enums import ParseMode
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
+import gspread_asyncio  # Используем асинхронную библиотеку
+from google.oauth2.service_account import Credentials
 
-# Загрузка переменных из .env
 load_dotenv()
 
+# Настройки
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 SPREADSHEET_ID = os.getenv("SPREADSHEET_ID")
 SERVICE_ACCOUNT_FILE = os.getenv("SERVICE_ACCOUNT_FILE")
@@ -22,12 +22,30 @@ logging.basicConfig(level=logging.INFO)
 bot = Bot(token=TELEGRAM_TOKEN)
 dp = Dispatcher()
 
-def get_spreadsheet():
-    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    creds = ServiceAccountCredentials.from_json_keyfile_name(SERVICE_ACCOUNT_FILE, scope)
-    client = gspread.authorize(creds)
-    return client.open_by_key(SPREADSHEET_ID)
+# --- Настройка Google Sheets ---
+def get_scoped_credentials():
+    scopes = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=scopes)
+    return creds
 
+# Создаем менеджер асинхронных соединений
+agcm = gspread_asyncio.AsyncioGSpreadClientManager(get_scoped_credentials)
+
+async def append_to_sheet(username, number, links):
+    client = await agcm.authorize()
+    spreadsheet = await client.open_by_key(SPREADSHEET_ID)
+    
+    if username:
+        ws = await spreadsheet.worksheet("TEAM")
+        await ws.append_row([username, number, " | ".join(links)])
+        return "TEAM"
+    else:
+        ws = await spreadsheet.worksheet("OFFERS")
+        now = datetime.now().strftime("%d.%m.%Y %H:%M")
+        await ws.append_row([now, number, " | ".join(links)])
+        return "OFFERS"
+
+# --- Логика парсинга ---
 def parse_message(text):
     words = text.split()
     number, username, tiktok_links = None, None, []
@@ -41,44 +59,39 @@ def parse_message(text):
             username = word
     return username, number, tiktok_links
 
-@dp.message(Command("start"))
+# --- Обработчики ---
+@dp.message(CommandStart())
 async def cmd_start(message: types.Message):
-    welcome_text = (
-        "<b>NEVADA TRAFFIC | Logging System</b>\n"
+    await message.answer(
+        "<b>NEVADA TRAFFIC | РЕГИСТРАЦИЯ ЗАЯВКИ</b>\n"
         "──────────────────────────\n"
-        "Система регистрации трафика запущена.\n\n"
-        "<b>Формат отчета:</b>\n"
-        "<code>[имя] [число] [ссылки]</code>\n\n"
-        "Отправьте данные для автоматической записи в Google Sheets."
+        "Бот готов к приему ссылок ✅\n\n"
+        "<b>Формат:</b>\n"
+        "<code>[имя] [число] [tiktok ссылки]</code>\n\n",
+        parse_mode=ParseMode.HTML
     )
-    await message.answer(welcome_text, parse_mode=ParseMode.HTML)
 
 @dp.message()
 async def handle_message(message: types.Message):
+    if not message.text or message.text.startswith("/"):
+        return
+
     username, number, links = parse_message(message.text)
     
     if number is None or not links:
-        await message.answer("❌ <b>Ошибка:</b> Неверный формат данных.", parse_mode=ParseMode.HTML)
+        await message.answer("❌ <b>Ошибка:</b> Неверный формат. Нужно число и хотя бы одна ссылка TikTok.")
         return
 
-    status_msg = await message.answer("⏳ <i>Запись данных...</i>", parse_mode=ParseMode.HTML)
+    status_msg = await message.answer("⏳ <i>Запись в таблицу...</i>", parse_mode=ParseMode.HTML)
 
     try:
-        sheet = get_spreadsheet()
-        if username:
-            ws = sheet.worksheet("TEAM")
-            ws.append_row([username, number, " | ".join(links)])
-            target = "TEAM"
-        else:
-            ws = sheet.worksheet("OFFERS")
-            now = datetime.now().strftime("%d.%m.%Y %H:%M")
-            ws.append_row([now, number, " | ".join(links)])
-            target = "OFFERS"
+        # Вызываем асинхронную функцию записи
+        target = await append_to_sheet(username, number, links)
 
         res_text = (
             f"✅ <b>УСПЕШНО ЗАПИСАНО</b>\n"
             f"──────────────────────────\n"
-            f"📂 <b>Раздел:</b> <code>{target}</code>\n"
+            f"📂 <b>Лист:</b> <code>{target}</code>\n"
             f"🔢 <b>Число:</b> <code>{number}</code>\n"
             f"🔗 <b>Ссылок:</b> <code>{len(links)}</code>\n"
             f"──────────────────────────\n"
@@ -87,11 +100,15 @@ async def handle_message(message: types.Message):
         await status_msg.edit_text(res_text, parse_mode=ParseMode.HTML)
         
     except Exception as e:
-        logging.error(f"Error: {e}")
-        await status_msg.edit_text(f"❌ <b>Ошибка записи:</b>\n<code>{str(e)}</code>", parse_mode=ParseMode.HTML)
+        logging.error(f"Spreadsheet error: {e}")
+        await status_msg.edit_text("❌ <b>Ошибка доступа к таблице.</b>\nОбратитесь к администратору.")
 
 async def main():
+    logging.info("Бот запущен...")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("Бот выключен")
