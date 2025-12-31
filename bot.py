@@ -120,17 +120,12 @@ async def handle_message(message: types.Message):
         await status_msg.edit_text(f"❌ <b>Ошибка записи:</b>\n{str(e)}", parse_mode=ParseMode.HTML)
 
 async def main():
-    logging.info("Спроба запуску бота...")
+    logging.info("Бот запускається...")
     try:
-        # Видаляємо вебхук з більшим таймаутом
-        await bot.delete_webhook(drop_pending_updates=True)
-        logging.info("Вебхук видалено, запуск polling...")
+        # Спробуємо запустити без видалення вебхука для тесту
         await dp.start_polling(bot, skip_updates=True)
     except Exception as e:
-        logging.error(f"Помилка при запуску: {e}")
-        # Чекаємо 5 секунд і пробуємо ще раз, якщо це помилка мережі
-        await asyncio.sleep(5)
-        await main()
+        logging.error(f"Помилка: {e}")
 
 if __name__ == "__main__":
     asyncio.run(main())
