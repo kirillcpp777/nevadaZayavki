@@ -24,7 +24,6 @@ logging.basicConfig(level=logging.INFO)
 bot = Bot(token=TELEGRAM_TOKEN)
 dp = Dispatcher()
 
-# --- Налаштування Google Sheets без використання файлів ---
 def get_scoped_credentials():
     if not GOOGLE_CREDS_JSON:
         logging.error("ПОМИЛКА: Змінна GOOGLE_CREDS_JSON не знайдена!")
@@ -32,16 +31,19 @@ def get_scoped_credentials():
     
     try:
         scopes = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        
+        # Завантажуємо JSON з тексту
         creds_info = json.loads(GOOGLE_CREDS_JSON)
         
-        # ВАЖЛИВО: Виправляємо криві символи переносу рядка в ключі
+        # ВИПРАВЛЕННЯ: Railway може некоректно обробляти символи \n.
+        # Цей рядок замінює подвійні слеші на справжні переноси рядка.
         if "private_key" in creds_info:
             creds_info["private_key"] = creds_info["private_key"].replace("\\n", "\n")
             
         creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
         return creds
     except Exception as e:
-        logging.error(f"Помилка парсингу JSON: {e}")
+        logging.error(f"Помилка авторизації Google: {e}")
         return None
 
 # Створюємо менеджер асинхронних з'єднань
