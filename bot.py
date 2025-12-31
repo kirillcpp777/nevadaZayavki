@@ -27,14 +27,22 @@ dp = Dispatcher()
 # --- Налаштування Google Sheets без використання файлів ---
 def get_scoped_credentials():
     if not GOOGLE_CREDS_JSON:
-        logging.error("ПОМИЛКА: Змінна GOOGLE_CREDS_JSON не знайдена в Railway!")
+        logging.error("ПОМИЛКА: Змінна GOOGLE_CREDS_JSON не знайдена!")
         return None
     
-    scopes = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    # Перетворюємо текст змінної назад у словник (dict)
-    creds_info = json.loads(GOOGLE_CREDS_JSON)
-    creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
-    return creds
+    try:
+        scopes = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        creds_info = json.loads(GOOGLE_CREDS_JSON)
+        
+        # ВАЖЛИВО: Виправляємо криві символи переносу рядка в ключі
+        if "private_key" in creds_info:
+            creds_info["private_key"] = creds_info["private_key"].replace("\\n", "\n")
+            
+        creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
+        return creds
+    except Exception as e:
+        logging.error(f"Помилка парсингу JSON: {e}")
+        return None
 
 # Створюємо менеджер асинхронних з'єднань
 agcm = gspread_asyncio.AsyncioGspreadClientManager(get_scoped_credentials)
