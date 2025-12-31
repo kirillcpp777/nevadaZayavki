@@ -29,7 +29,7 @@ def get_scoped_credentials():
     return creds
 
 # Создаем менеджер асинхронных соединений
-agcm = gspread_asyncio.AsyncioGSpreadClientManager(get_scoped_credentials)
+agcm = gspread_asyncio.AsyncioGspreadClientManager(get_scoped_credentials)
 
 async def append_to_sheet(username, number, links):
     client = await agcm.authorize()
