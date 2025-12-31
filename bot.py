@@ -15,7 +15,7 @@ load_dotenv()
 # Настройки
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 SPREADSHEET_ID = os.getenv("SPREADSHEET_ID")
-SERVICE_ACCOUNT_FILE = os.getenv("SERVICE_ACCOUNT_FILE")
+SERVICE_ACCOUNT_FILE = os.getenv("SERVICE_ACCOUNT_FILE").strip()
 
 logging.basicConfig(level=logging.INFO)
 
