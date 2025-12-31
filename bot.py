@@ -104,11 +104,12 @@ async def handle_message(message: types.Message):
         await status_msg.edit_text("❌ <b>Ошибка доступа к таблице.</b>\nОбратитесь к администратору.")
 
 async def main():
-    logging.info("Бот запущен...")
-    await dp.start_polling(bot)
+    logging.info("Запуск polling...")
+    try:
+        await bot.delete_webhook(drop_pending_updates=True)
+        await dp.start_polling(bot)
+    except Exception as e:
+        logging.error(f"Ошибка при запуске: {e}")
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("Бот выключен")
+    asyncio.run(main())
