@@ -13,7 +13,7 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 load_dotenv()
 
 # --- Налаштування ---
-TOKEN = os.getenv("TELEGRAM_TOKEN")
+TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))  # Ваш ID в Телеграм
 
 logging.basicConfig(level=logging.INFO)
