@@ -12,103 +12,100 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
 load_dotenv()
 
-# --- Налаштування ---
-TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = int(os.getenv("ADMIN_ID"))  # Ваш ID в Телеграм
+# --- Конфигурация ---
+TOKEN = os.getenv("TELEGRAM_TOKEN")
+ADMIN_ID = int(os.getenv("ADMIN_ID"))  # Ваш цифровой ID
 
 logging.basicConfig(level=logging.INFO)
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
-# --- Стан (FSM) ---
+# --- Состояния ---
 class SupportState(StatesGroup):
-    waiting_for_issue = State()
+    waiting_for_data = State()
 
-# --- Клавіатури ---
+# --- Клавиатуры ---
 def main_menu():
-    kb = [
-        [KeyboardButton(text="🆘 Написати проблему")]
-    ]
-    return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
+    return ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="🆘 Создать обращение")]],
+        resize_keyboard=True
+    )
 
-# --- Обробники ---
+# --- Обработчики ---
 
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message):
     await message.answer(
-        f"Вітаю, {message.from_user.full_name}! 👋\n\n"
-        "Якщо у вас виникла проблема, натисніть кнопку нижче і опишіть її.",
+        f"Приветствуем, {message.from_user.first_name}.\n\n"
+        "Данный бот предназначен для прямой связи с администрацией.\n"
+        "Нажмите кнопку ниже, чтобы изложить суть вашего вопроса.",
         reply_markup=main_menu()
     )
 
-@dp.message(F.text == "🆘 Написати проблему")
+@dp.message(F.text == "🆘 Создать обращение")
 async def start_support(message: types.Message, state: FSMContext):
-    await state.set_state(SupportState.waiting_for_issue)
+    await state.set_state(SupportState.waiting_for_data)
     await message.answer(
-        "📝 **Опишіть вашу проблему.**\n"
-        "Ви можете надіслати текст разом з фото одним повідомленням.",
-        reply_markup=types.ReplyKeyboardRemove() # Прибираємо кнопку на час запису
+        "Пожалуйста, прикрепите фото (если есть) и введите описание проблемы в одном сообщении.",
+        reply_markup=types.ReplyKeyboardRemove()
     )
 
-# Обробка повідомлення від користувача (текст або фото)
-@dp.message(SupportState.waiting_for_issue)
-async def process_issue(message: types.Message, state: FSMContext):
-    # Відправляємо адміну (вам)
+# Получение данных от пользователя и пересылка вам
+@dp.message(SupportState.waiting_for_data)
+async def process_report(message: types.Message, state: FSMContext):
     try:
-        # Інформація про відправника
-        header = (
-            f"📩 <b>НОВА ЗАЯВКА</b>\n"
-            f"👤 Від: {message.from_user.mention_html()}\n"
+        # Формируем заголовок для админа
+        info = (
+            f"<b>НОВОЕ ОБРАЩЕНИЕ</b>\n"
+            f"──────────────────\n"
+            f"👤 От: {message.from_user.full_name}\n"
             f"🆔 ID: <code>{message.from_user.id}</code>\n"
             f"──────────────────\n"
         )
 
         if message.photo:
-            # Якщо є фото, копіюємо його адміну з підписом
-            await bot.send_photo(
-                chat_id=ADMIN_ID,
-                photo=message.photo[-1].file_id,
-                caption=header + (message.caption if message.caption else "Без опису (тільки фото)"),
-                parse_mode=ParseMode.HTML
-            )
+            # Отправка фото с описанием
+            caption = info + (message.caption if message.caption else "<i>Описание отсутствует</i>")
+            await bot.send_photo(chat_id=ADMIN_ID, photo=message.photo[-1].file_id, caption=caption, parse_mode=ParseMode.HTML)
         else:
-            # Якщо тільки текст
-            await bot.send_message(
-                chat_id=ADMIN_ID,
-                text=header + message.text,
-                parse_mode=ParseMode.HTML
-            )
+            # Отправка только текста
+            await bot.send_message(chat_id=ADMIN_ID, text=info + message.text, parse_mode=ParseMode.HTML)
 
-        await message.answer("✅ Ваше повідомлення надіслано адміністратору. Очікуйте на відповідь!", reply_markup=main_menu())
+        await message.answer("Ваше обращение принято. Ожидайте ответа специалиста.", reply_markup=main_menu())
         await state.clear()
         
     except Exception as e:
-        logging.error(f"Error sending to admin: {e}")
-        await message.answer("❌ Сталася помилка при відправці. Спробуйте пізніше.")
+        logging.error(f"Error: {e}")
+        await message.answer("Произошла техническая ошибка. Попробуйте позже.")
 
-# Функція відповіді (тільки для адміна)
-# Щоб відповісти користувачу, адмін має зробити REPlY (відповісти) на повідомлення бота
+# Ответ администратора пользователю (через Reply)
 @dp.message(F.chat.id == ADMIN_ID, F.reply_to_message)
 async def admin_reply(message: types.Message):
     try:
-        # Дістаємо ID користувача з тексту (ми його туди спеціально вписали)
-        # Або простіший варіант - парсимо переслане повідомлення
-        text = message.reply_to_message.text or message.reply_to_message.caption
-        if "ID:" in text:
-            user_id = int(text.split("ID:")[1].split("\n")[0].strip())
+        # Извлекаем ID из текста сообщения, на которое отвечаем
+        reply_text = message.reply_to_message.text or message.reply_to_message.caption
+        if "ID:" in reply_text:
+            user_id = int(reply_text.split("ID:")[1].split("\n")[0].strip())
+            
+            prefix = "<b>ОТВЕТ АДМИНИСТРАЦИИ:</b>\n\n"
             
             if message.photo:
-                await bot.send_photo(chat_id=user_id, photo=message.photo[-1].file_id, caption=f"<b>Відповідь від адміністратора:</b>\n\n{message.caption if message.caption else ''}", parse_mode=ParseMode.HTML)
+                await bot.send_photo(
+                    chat_id=user_id, 
+                    photo=message.photo[-1].file_id, 
+                    caption=prefix + (message.caption if message.caption else ""),
+                    parse_mode=ParseMode.HTML
+                )
             else:
-                await bot.send_message(chat_id=user_id, text=f"<b>Відповідь від адміністратора:</b>\n\n{message.text}", parse_mode=ParseMode.HTML)
+                await bot.send_message(chat_id=user_id, text=prefix + message.text, parse_mode=ParseMode.HTML)
             
-            await message.answer("✅ Відповідь надіслана!")
+            await message.answer("✅ Ответ успешно доставлен.")
     except Exception as e:
-        await message.answer(f"❌ Помилка при відповіді: {e}")
+        await message.answer(f"❌ Ошибка отправки: {e}")
 
 async def main():
-    logging.info("Бот підтримки запущений...")
+    print("Бот запущен...")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
