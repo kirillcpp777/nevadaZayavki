@@ -166,41 +166,60 @@ async def admin_add_start(message: types.Message, state: FSMContext):
     await state.set_state(AdminState.waiting_for_links)
     await message.answer("Пришли сообщение с ссылками.\n\n📝 Примеры форматов:\n• 5 поток - №90: https://...\n• №91: https://...\n• Просто ссылки (автонумерация)")
 
-@dp.message(AdminState.waiting_for_links, F.from_user.id == ADMIN_ID)
-async def admin_process_links(message: types.Message, state: FSMContext):
-    links_db = load_json(LINKS_FILE)
-    text = message.text or ""
-    
-    # Разрезаем сообщение на строки, чтобы обрабатывать каждую отдельно
-    lines = text.split('\n')
+# --- ВСЕЯДНЫЙ ОБРАБОТЧИК (ФАЙЛЫ + ТЕКСТ) ---
+
+async def parse_and_save_links(content: str, links_db: dict):
+    lines = content.split('\n')
     added_count = 0
-    
     for line in lines:
-        # Ищем ссылку в строке
+        line = line.strip()
+        if not line: continue
+        
+        # Ищем ссылку
         link_match = re.search(r'https?://\S+', line)
         if link_match:
             link = link_match.group(0)
-            # Ищем число (номер) в этой же строке
+            # Ищем число для номера
             num_match = re.search(r'(\d+)', line)
             
             if num_match:
-                # Если нашли число — используем его как номер
                 num = num_match.group(1)
                 links_db[str(num)] = link
-                added_count += 1
             else:
-                # Если числа в строке нет — автонумерация (берем следующий свободный)
                 curr_max = max([int(n) for n in links_db.keys() if n.isdigit()] or [0])
                 links_db[str(curr_max + 1)] = link
-                added_count += 1
+            added_count += 1
+    return added_count
 
-    if added_count > 0:
+@dp.message(AdminState.waiting_for_links, F.from_user.id == ADMIN_ID)
+async def admin_process_links_combined(message: types.Message, state: FSMContext):
+    links_db = load_json(LINKS_FILE)
+    content = ""
+
+    # Если прислали файл
+    if message.document:
+        if not message.document.file_name.endswith('.txt'):
+            return await message.answer("❌ Брат, принимаю только .txt файлы!")
+        
+        file = await bot.get_file(message.document.file_id)
+        file_buffer = await bot.download_file(file.file_path)
+        content = file_buffer.read().decode('utf-8')
+    
+    # Если прислали просто текст
+    elif message.text:
+        content = message.text
+
+    if not content:
+        return await message.answer("❌ Пусто. Скинь текст или .txt файл.")
+
+    added = await parse_and_save_links(content, links_db)
+
+    if added > 0:
         save_json(LINKS_FILE, links_db)
         await state.clear()
-        await message.answer(f"✅ Готово! Добавлено: {added_count}\n📊 Всего в базе: {len(links_db)}", reply_markup=admin_menu())
+        await message.answer(f"✅ Красава! Добавлено ссылок: {added}\n📊 Всего в базе: {len(links_db)}", reply_markup=admin_menu())
     else:
-        await message.answer("❌ Брат, я не нашел тут ни одной ссылки. Попробуй еще раз.")
-    
+        await message.answer("❌ Не нашел ссылок в файле/сообщении. Проверь содержимое.")
 @dp.message(F.text == "📊 Статус ссылок", F.from_user.id == ADMIN_ID)
 async def admin_status(message: types.Message):
     links_db = load_json(LINKS_FILE)
