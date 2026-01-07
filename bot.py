@@ -163,28 +163,29 @@ async def admin_add_start(message: types.Message, state: FSMContext):
 
 @dp.message(AdminState.waiting_for_links, F.from_user.id == ADMIN_ID)
 async def admin_process_links(message: types.Message, state: FSMContext):
-    # Улучшенное регулярное выражение:
-    # 1. Ищем № и цифры (группа 1)
-    # 2. Пропускаем любой текст до http
-    # 3. Забираем ссылку до пробела или конца строки (группа 2)
+    # Новое регулярное выражение:
+    # 1. №(\d+) — ищет знак № и сохраняет идущие за ним цифры
+    # 2. .*? — лениво пропускает любой текст (двоеточия, тире, пробелы)
+    # 3. (https?://\S+) — ищет и сохраняет ссылку до ближайшего пробела
     items_found = re.findall(r'№(\d+).*?(https?://\S+)', message.text, re.DOTALL)
     
+    links_db = load_json(LINKS_FILE)
+    
     if not items_found:
-        # Резервный поиск просто ссылок
+        # Если формат №номер не найден, пробуем найти просто ссылки без привязки к номерам
         links_only = re.findall(r'(https?://\S+)', message.text)
         if not links_only:
-            return await message.answer("Ссылок не найдено. Проверь формат (должно быть №номер: ссылка).")
+            return await message.answer("Ссылок не найдено. Проверь формат.")
         
-        links_db = load_json(LINKS_FILE)
         curr_max = max([int(n) for n in links_db.keys() if n.isdigit()] or [0])
         for i, link in enumerate(links_only, start=curr_max + 1):
             links_db[str(i)] = link
         msg_text = f"✅ Добавлено {len(links_only)} ссылок по порядку."
     else:
-        links_db = load_json(LINKS_FILE)
+        # Если пары №номер-ссылка найдены, записываем их строго под этими номерами
         for num, link in items_found:
             links_db[str(num)] = link
-        msg_text = f"✅ Добавлено {len(items_found)} ссылок с сохранением номеров."
+        msg_text = f"✅ Добавлено {len(items_found)} ссылок с вашими номерами."
 
     save_json(LINKS_FILE, links_db)
     await state.clear()
