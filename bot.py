@@ -4,7 +4,7 @@ import os
 import random
 import string
 import json
-import re  # ОБЯЗАТЕЛЬНО: добавили для поиска ссылок в тексте
+import re
 from dotenv import load_dotenv
 
 from aiogram import Bot, Dispatcher, types, F
@@ -168,9 +168,9 @@ async def admin_add_start(message: types.Message, state: FSMContext):
 
 @dp.message(AdminState.waiting_for_links, F.from_user.id == ADMIN_ID)
 async def admin_process_links(message: types.Message, state: FSMContext):
-    # Улучшенный поиск: ищем №(число) в любом месте строки, затем ссылку
-    # Паттерн теперь находит: "5 поток - №90: https://..."
-    items_found = re.findall(r'№\s*(\d+)[^\n]*?(https?://\S+)', message.text, re.IGNORECASE)
+    # Улучшенный поиск: ищем №(число) и ссылку на той же строке
+    # Паттерн находит: "№90: https://t.me/+..." или "5 поток - №90: https://..."
+    items_found = re.findall(r'№\s*(\d+)\s*[:\s-]*\s*(https?://[^\s\n]+)', message.text, re.IGNORECASE)
     
     links_db = load_json(LINKS_FILE)
     
@@ -200,12 +200,23 @@ async def admin_status(message: types.Message):
     if not links_db: return await message.answer("База пуста.")
     
     taken = {item['num']: item['username'] for item in user_db.values()}
-    report = "<b>Статус:</b>\n"
-    for n in sorted(links_db.keys(), key=int):
-        status = f"❌ (@{taken[n]})" if n in taken else "✅"
-        report += f"{n}: {status}\n"
+    report = "<b>📊 Статус базы ссылок:</b>\n\n"
     
-    await message.answer(report[:4000], parse_mode=ParseMode.HTML)
+    # Правильная сортировка по числовому значению
+    sorted_nums = sorted(links_db.keys(), key=lambda x: int(x) if x.isdigit() else 999999)
+    
+    for n in sorted_nums:
+        status = f"❌ @{taken[n]}" if n in taken else "✅ свободен"
+        link = links_db[n]
+        report += f"<b>№{n}:</b> {status}\n<code>{link}</code>\n\n"
+    
+    # Отправляем по частям если слишком длинно
+    if len(report) > 4000:
+        parts = [report[i:i+4000] for i in range(0, len(report), 4000)]
+        for part in parts:
+            await message.answer(part, parse_mode=ParseMode.HTML)
+    else:
+        await message.answer(report, parse_mode=ParseMode.HTML)
 
 @dp.message(F.text == "🧹 Очистить ссылки", F.from_user.id == ADMIN_ID)
 async def clear_all(message: types.Message):
