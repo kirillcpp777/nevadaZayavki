@@ -4,24 +4,19 @@ import os
 import random
 import string
 import json
+import re  # Добавили для поиска ссылок и парсинга чисел
 from dotenv import load_dotenv
-import re
 
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart, Command
 from aiogram.enums import ParseMode
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import (
-    ReplyKeyboardMarkup, KeyboardButton,
-    InlineKeyboardMarkup, InlineKeyboardButton
-)
-from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
 load_dotenv()
 
 TOKEN = os.getenv("TELEGRAM_TOKEN")
-# Берем первый ID из списка администраторов
 ADMIN_ID = int(os.getenv("ADMIN_IDS").split(",")[0])
 
 logging.basicConfig(level=logging.INFO)
@@ -35,8 +30,7 @@ LINKS_FILE = "links.json"
 def load_json(file_path):
     if os.path.exists(file_path):
         with open(file_path, "r", encoding="utf-8") as f:
-            try:
-                return json.load(f)
+            try: return json.load(f)
             except: return {}
     return {}
 
@@ -44,7 +38,6 @@ def save_json(file_path, data):
     with open(file_path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
 
-# Состояния
 class AdminState(StatesGroup):
     waiting_for_links = State()
 
@@ -79,151 +72,151 @@ async def back_home(message: types.Message, state: FSMContext):
     await state.clear()
     await message.answer("Главное меню:", reply_markup=main_menu())
 
-# --- ЛОГИКА ДЛЯ ЮЗЕРА ---
+# --- ЛОГИКА ВЫДАЧИ (ТЕКСТОМ) ---
 
 @dp.message(F.text == "🔗 ПОЛУЧИТЬ ССЫЛКИ")
-async def show_user_links(message: types.Message):
+async def show_free_links_text(message: types.Message):
     links_db = load_json(LINKS_FILE)
     user_db = load_json(DB_FILE)
     
-    # Проверка, нет ли уже ссылки у юзера
+    # Проверка, нет ли уже ссылки
     for data in user_db.values():
         if data.get('user_id') == message.from_user.id:
-            return await message.answer(
-                f"Ты уже занял номер {data['num']}!\n"
-                f"🔗 Ссылка: {data['link']}\n"
-                f"🔑 Твой код: <code>{next(k for k, v in user_db.items() if v == data)}</code>",
-                parse_mode=ParseMode.HTML
-            )
+            return await message.answer(f"У тебя уже есть номер {data['num']}!\n🔗 Ссылка: {data['link']}")
 
     if not links_db:
         return await message.answer("Свободных ссылок пока нет.")
 
     taken_nums = [str(item['num']) for item in user_db.values()]
-    free_nums = [n for n in links_db.keys() if n not in taken_nums]
+    free_nums = [int(n) for n in links_db.keys() if n not in taken_nums and n.isdigit()]
     
     if not free_nums:
         return await message.answer("Все номера заняты!")
 
-    builder = InlineKeyboardBuilder()
-    for num in sorted(free_nums, key=lambda x: int(x) if x.isdigit() else 0):
-        builder.button(text=f"№ {num}", callback_data=f"take_{num}")
+    free_nums.sort()
     
-    builder.adjust(4)
-    await message.answer("Выберите свободный номер для работы:", reply_markup=builder.as_markup())
+    # Формируем красивый список (например: 1-5, 10, 15-20)
+    ranges = []
+    if free_nums:
+        start = free_nums[0]
+        for i in range(1, len(free_nums)):
+            if free_nums[i] != free_nums[i-1] + 1:
+                ranges.append(f"{start}-{free_nums[i-1]}" if start != free_nums[i-1] else f"{start}")
+                start = free_nums[i]
+        ranges.append(f"{start}-{free_nums[-1]}" if start != free_nums[-1] else f"{start}")
 
-@dp.callback_query(F.data.startswith("take_"))
-async def process_take_link(callback: types.CallbackQuery):
-    num = callback.data.split("_")[1]
+    text = "✅ <b>Свободные номера:</b>\n" + ", ".join(ranges)
+    text += "\n\nПиши номер или диапазон (например: <code>90</code> или <code>90-95</code>):"
+    
+    await message.answer(text, parse_mode=ParseMode.HTML)
+
+@dp.message(lambda msg: any(char.isdigit() for char in msg.text) and not msg.text.startswith('/'))
+async def process_text_selection(message: types.Message):
     links_db = load_json(LINKS_FILE)
     user_db = load_json(DB_FILE)
     
+    # Проверка на наличие ссылки
+    for data in user_db.values():
+        if data.get('user_id') == message.from_user.id:
+            return # Игнорируем, если уже есть
+
+    # Парсим ввод (поддерживает "90", "90-95", "90 91")
+    requested_nums = []
+    # Ищем диапазоны типа 90-95
+    ranges = re.findall(r'(\d+)\s*-\s*(\d+)', message.text)
+    for r in ranges:
+        for n in range(int(r[0]), int(r[1]) + 1):
+            requested_nums.append(str(n))
+    
+    # Ищем одиночные числа, которые не попали в диапазоны
+    singles = re.findall(r'\b\d+\b', message.text)
+    requested_nums.extend([n for n in singles if n not in requested_nums])
+
+    if not requested_nums:
+        return
+
     taken_nums = [str(item['num']) for item in user_db.values()]
-    if num in taken_nums:
-        return await callback.answer("Этот номер только что заняли!", show_alert=True)
-
-    unique_code = ''.join(random.choice(string.ascii_lowercase + string.digits) for _ in range(5))
-    link = links_db[num]
     
-    user_db[unique_code] = {
-        "user_id": callback.from_user.id,
-        "num": num,
-        "username": callback.from_user.username or "NoUsername",
-        "link": link
-    }
-    save_json(DB_FILE, user_db)
+    assigned = []
+    for num in requested_nums:
+        if num in links_db and num not in taken_nums:
+            # Выдаем первую попавшуюся свободную из списка
+            unique_code = ''.join(random.choice(string.ascii_lowercase + string.digits) for _ in range(5))
+            link = links_db[num]
+            
+            user_db[unique_code] = {
+                "user_id": message.from_user.id,
+                "num": num,
+                "username": message.from_user.username or "NoName",
+                "link": link
+            }
+            save_json(DB_FILE, user_db)
+            
+            await message.answer(
+                f"✅ <b>Номер {num} закреплен!</b>\n🔗 {link}\n🔑 Код: <code>{unique_code}</code>",
+                parse_mode=ParseMode.HTML
+            )
+            
+            await bot.send_message(ADMIN_ID, f"🔔 Новый трафер: @{message.from_user.username}\nНомер: {num}\nКод: {unique_code}")
+            return # Выдаем только ОДНУ ссылку за раз
 
-    await callback.message.edit_text(
-        f"✅ <b>Номер {num} закреплен за тобой!</b>\n\n"
-        f"🔗 Ссылка: {link}\n"
-        f"🔑 Твой код для статистики: <code>{unique_code}</code>\n\n"
-        f"Удачи в работе!",
-        parse_mode=ParseMode.HTML
-    )
-    
-    await bot.send_message(
-        ADMIN_ID, 
-        f"🔔 <b>Новый трафер!</b>\nЮзер: @{callback.from_user.username}\nНомер: {num}\nКод: <code>{unique_code}</code>",
-        parse_mode=ParseMode.HTML
-    )
+    await message.answer("Выбранные номера заняты или не существуют. Попробуй другие.")
 
-# --- АДМИН ПАНЕЛЬ ---
+# --- АДМИНКА ---
 
 @dp.message(Command("admin"), F.from_user.id == ADMIN_ID)
 async def admin_panel(message: types.Message):
     await message.answer("Панель управления:", reply_markup=admin_menu())
 
-@dp.message(F.text == "📊 Статус ссылок", F.from_user.id == ADMIN_ID)
-async def admin_status(message: types.Message):
-    links_db = load_json(LINKS_FILE)
-    user_db = load_json(DB_FILE)
-    
-    if not links_db:
-        return await message.answer("База ссылок пуста.")
-
-    taken_nums = {item['num']: item['username'] for item in user_db.values()}
-    builder = InlineKeyboardBuilder()
-
-    for num in sorted(links_db.keys(), key=lambda x: int(x) if x.isdigit() else 0):
-        status = "❌" if num in taken_nums else "✅"
-        builder.button(text=f"{status} №{num}", callback_data=f"info_{num}")
-
-    builder.adjust(4)
-    await message.answer("Статус (✅-своб, ❌-занят). Нажми на ❌ чтобы узнать кто занял:", reply_markup=builder.as_markup())
-
-@dp.callback_query(F.data.startswith("info_"), F.from_user.id == ADMIN_ID)
-async def link_info(callback: types.CallbackQuery):
-    num = callback.data.split("_")[1]
-    user_db = load_json(DB_FILE)
-    user_info = next((v for v in user_db.values() if v['num'] == num), None)
-    
-    if user_info:
-        await callback.answer(f"Занял: @{user_info['username']}\nID: {user_info['user_id']}", show_alert=True)
-    else:
-        await callback.answer(f"Номер {num} пока свободен", show_alert=True)
-
 @dp.message(F.text == "📥 Добавить ссылки", F.from_user.id == ADMIN_ID)
-async def start_add_links(message: types.Message, state: FSMContext):
+async def admin_add_start(message: types.Message, state: FSMContext):
     await state.set_state(AdminState.waiting_for_links)
-    await message.answer("Пришли список ссылок (каждая с новой строки):")
+    await message.answer("Просто перешли список с сылками сюда. Бот сам их вытащит.")
 
 @dp.message(AdminState.waiting_for_links, F.from_user.id == ADMIN_ID)
-async def process_adding_links(message: types.Message, state: FSMContext):
-    # Ищем все подстроки, похожие на ссылки (начинаются с http)
+async def admin_process_links(message: types.Message, state: FSMContext):
     links_found = re.findall(r'(https?://[^\s]+)', message.text)
-    
     if not links_found:
-        return await message.answer("Ссылок не найдено. Попробуй еще раз.")
+        return await message.answer("Ссылок не найдено.")
 
     links_db = load_json(LINKS_FILE)
-    
-    # Определяем начальный индекс для нумерации
-    start_idx = 1
+    curr_max = 0
     if links_db:
         nums = [int(n) for n in links_db.keys() if n.isdigit()]
-        if nums: 
-            start_idx = max(nums) + 1
+        if nums: curr_max = max(nums)
 
-    # Сохраняем только чистые ссылки
-    for i, link in enumerate(links_found, start=start_idx):
+    for i, link in enumerate(links_found, start=curr_max + 1):
         links_db[str(i)] = link
     
     save_json(LINKS_FILE, links_db)
     await state.clear()
-    await message.answer(
-        f"✅ Успешно! Из текста извлечено и добавлено {len(links_found)} ссылок.\n"
-        f"Всего в базе: {len(links_db)}", 
-        reply_markup=admin_menu()
-    )
+    await message.answer(f"✅ Добавлено {len(links_found)} ссылок.", reply_markup=admin_menu())
+
+@dp.message(F.text == "📊 Статус ссылок", F.from_user.id == ADMIN_ID)
+async def admin_status(message: types.Message):
+    links_db = load_json(LINKS_FILE)
+    user_db = load_json(DB_FILE)
+    if not links_db: return await message.answer("База пуста.")
+    
+    taken = {item['num']: item['username'] for item in user_db.values()}
+    report = "<b>Статус:</b>\n"
+    for n in sorted(links_db.keys(), key=int):
+        status = f"❌ (@{taken[n]})" if n in taken else "✅"
+        report += f"{n}: {status}\n"
+    
+    if len(report) > 4000: # Защита от слишком длинных сообщений
+        await message.answer("База слишком большая, скину файлом позже.")
+    else:
+        await message.answer(report, parse_mode=ParseMode.HTML)
 
 @dp.message(F.text == "🧹 Очистить ссылки", F.from_user.id == ADMIN_ID)
-async def clear_links(message: types.Message):
+async def clear_all(message: types.Message):
     save_json(LINKS_FILE, {})
     save_json(DB_FILE, {})
-    await message.answer("Все данные очищены.")
+    await message.answer("Все очищено.")
 
-# --- ЗАПУСК ---
 async def main():
+    await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
