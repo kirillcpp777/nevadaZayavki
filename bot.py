@@ -161,28 +161,35 @@ async def admin_add_start(message: types.Message, state: FSMContext):
     await state.set_state(AdminState.waiting_for_links)
     await message.answer("Пришли сообщение с ссылками. Я вытащу их автоматически.")
 
-@dp.message(AdminState.waiting_for_links, F.from_user.id == ADMIN_ID)
+@@dp.message(AdminState.waiting_for_links, F.from_user.id == ADMIN_ID)
 async def admin_process_links(message: types.Message, state: FSMContext):
-    # Теперь ищем ссылки ВНУТРИ текста, а не только в начале строки
-    links_found = re.findall(r'(https?://[^\s]+)', message.text)
+    # Регулярное выражение ищет номер после знака № и ссылку в этой же строке
+    # Находит пары типа: ('90', 'https://t.me/...')
+    items_found = re.findall(r'№(?:п/п\s*)?(\d+)[^\d]+(https?://[^\s]+)', message.text)
     
-    if not links_found:
-        return await message.answer("Ссылок не найдено. Проверь формат.")
+    if not items_found:
+        # Если формат "№90" не найден, пробуем найти просто любые ссылки
+        links_only = re.findall(r'(https?://[^\s]+)', message.text)
+        if not links_only:
+            return await message.answer("Ссылок не найдено. Проверь формат (должно быть №номер: ссылка).")
+        
+        # Если нашли только ссылки, нумеруем их по порядку как раньше
+        links_db = load_json(LINKS_FILE)
+        curr_max = max([int(n) for n in links_db.keys() if n.isdigit()] or [0])
+        for i, link in enumerate(links_only, start=curr_max + 1):
+            links_db[str(i)] = link
+        msg_text = f"✅ Добавлено {len(links_only)} ссылок по порядку."
+    else:
+        # Если нашли пары номер-ссылка, сохраняем их именно под этими номерами
+        links_db = load_json(LINKS_FILE)
+        for num, link in items_found:
+            links_db[str(num)] = link
+        msg_text = f"✅ Добавлено {len(items_found)} ссылок с сохранением твоих номеров."
 
-    links_db = load_json(LINKS_FILE)
-    curr_max = 0
-    if links_db:
-        nums = [int(n) for n in links_db.keys() if n.isdigit()]
-        if nums: curr_max = max(nums)
-
-    # Добавляем новые ссылки, продолжая нумерацию
-    for i, link in enumerate(links_found, start=curr_max + 1):
-        links_db[str(i)] = link
-    
     save_json(LINKS_FILE, links_db)
     await state.clear()
-    await message.answer(f"✅ Добавлено {len(links_found)} ссылок. Всего в базе: {len(links_db)}", reply_markup=admin_menu())
-
+    await message.answer(f"{msg_text}\nВсего в базе: {len(links_db)}", reply_markup=admin_menu())
+    
 @dp.message(F.text == "📊 Статус ссылок", F.from_user.id == ADMIN_ID)
 async def admin_status(message: types.Message):
     links_db = load_json(LINKS_FILE)
