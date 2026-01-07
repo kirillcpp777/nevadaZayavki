@@ -25,11 +25,13 @@ dp = Dispatcher()
 DB_FILE = "data_storage.json"
 LINKS_FILE = "links.json"
 
-# --- Работа с БД ---
+# --- Функции БД ---
 def load_json(file_path):
     if os.path.exists(file_path):
         with open(file_path, "r", encoding="utf-8") as f:
-            return json.load(f)
+            try:
+                return json.load(f)
+            except: return {}
     return {}
 
 def save_json(file_path, data):
@@ -42,7 +44,7 @@ class RegState(StatesGroup):
 class AdminState(StatesGroup):
     waiting_for_links = State()
 
-# --- Клавиатуры ---
+# --- Меню ---
 def main_menu():
     return ReplyKeyboardMarkup(
         keyboard=[
@@ -61,39 +63,39 @@ def admin_menu():
         resize_keyboard=True
     )
 
-# --- Обработчики ---
+# --- Обработка команд ---
 
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message, state: FSMContext):
     await state.clear()
-    await message.answer("Добро пожаловать. Используйте меню для навигации:", reply_markup=main_menu())
+    await message.answer("Используйте кнопки меню для работы с ботом:", reply_markup=main_menu())
 
 @dp.message(F.text == "Главное меню")
 async def back_to_main(message: types.Message, state: FSMContext):
     await state.clear()
-    await message.answer("Вы перешли в главное меню:", reply_markup=main_menu())
+    await message.answer("Вы вернулись в главное меню:", reply_markup=main_menu())
 
 @dp.message(F.text == "ПОЛУЧИТЬ ССЫЛКИ")
 async def start_reg(message: types.Message, state: FSMContext):
     links_db = load_json(LINKS_FILE)
-    user_db = load_json(DB_FILE)
-    
     if not links_db:
         return await message.answer("База ссылок пуста. Обратитесь к администратору.")
 
+    user_db = load_json(DB_FILE)
     taken_nums = [str(item['num']) for item in user_db.values()]
     free_nums = [n for n in links_db.keys() if n not in taken_nums]
     
     if not free_nums:
-        return await message.answer("Свободные номера отсутствуют.")
+        return await message.answer("Все доступные номера уже заняты.")
 
+    # Генерация чистого кода
     unique_code = ''.join(random.choice(string.ascii_lowercase + string.digits) for _ in range(5))
-    available_str = ", ".join(free_nums[:15])
+    available_preview = ", ".join(free_nums[:15])
     
     await message.answer(
-        f"Ваш код для этой сессии: `{(unique_code)}` \n\n"
-        f"*Доступные номера:* {available_str}...\n"
-        f"Введите номер или диапазон (например, 97-100):",
+        f"Ваш код сессии: `{(unique_code)}` \n\n"
+        f"**Доступные номера:** {available_preview}...\n\n"
+        f"Введите номер (например `7`) или диапазон (например `96-100`):",
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=ReplyKeyboardRemove()
     )
@@ -102,75 +104,78 @@ async def start_reg(message: types.Message, state: FSMContext):
 
 @dp.message(RegState.waiting_for_num)
 async def process_num(message: types.Message, state: FSMContext):
-    input_text = message.text.strip()
+    input_text = message.text.strip().replace(" ", "")
     links_db = load_json(LINKS_FILE)
     user_db = load_json(DB_FILE)
     taken_nums = [str(item['num']) for item in user_db.values()]
     
     requested_nums = []
     
-    # Обработка диапазона
+    # Обработка ввода (число или диапазон)
     if "-" in input_text:
         try:
-            start_n, end_n = map(int, input_text.split("-"))
+            parts = input_text.split("-")
+            start_n = int(parts[0])
+            end_n = int(parts[1])
+            # Чтобы не ввели 100-1
+            if start_n > end_n: start_n, end_n = end_n, start_n
             requested_nums = [str(i) for i in range(start_n, end_n + 1)]
-        except ValueError:
-            return await message.answer("Неверный формат диапазона. Введите число или 'начало-конец'.")
+        except:
+            return await message.answer("Ошибка формата. Введите например `96-100`.")
     else:
         requested_nums = [input_text]
 
-    # Проверка наличия и доступности
-    results = []
+    # Валидация перед записью
+    valid_nums = []
     for n in requested_nums:
         if n not in links_db:
-            return await message.answer(f"Номер *{n}* отсутствует в базе.")
+            return await message.answer(f"Номер **{n}** отсутствует в базе.")
         if n in taken_nums:
-            return await message.answer(f"Номер *{n}* уже занят.")
-        results.append(n)
+            return await message.answer(f"Номер **{n}** уже занят.")
+        valid_nums.append(n)
 
     data = await state.get_data()
-    base_code = data['temp_code']
+    session_code = data['temp_code']
     
-    # Сохраняем каждый номер отдельно
-    response_links = []
-    for idx, n in enumerate(results):
-        # Если номеров много, создаем под-коды или привязываем к основному
-        current_code = f"{base_code}_{idx}" if len(results) > 1 else base_code
-        link = links_db[n]
-        
-        user_db[current_code] = {
+    response_msg = "**Вы успешно пронумеровались!**\n\n"
+    
+    for idx, num in enumerate(valid_nums):
+        link = links_db[num]
+        # Создаем запись в базе
+        record_id = f"{session_code}_{idx}" if len(valid_nums) > 1 else session_code
+        user_db[record_id] = {
             "user_id": message.from_user.id,
-            "num": n,
-            "username": message.from_user.username,
+            "num": num,
+            "username": message.from_user.username or "no_username",
             "link": link
         }
-        response_links.append(f"Номер *{n}*: {link}")
+        response_msg += f"🔢 Номер **{num}**: {link}\n"
 
     save_json(DB_FILE, user_db)
 
-    links_text = "\n".join(response_links)
     await message.answer(
-        f"*Регистрация завершена*\n\n{links_text}\n\n"
-        f"Код для статистики: `{(base_code)}`",
+        f"{response_msg}\nВаш код статистики: `{(session_code)}`",
         reply_markup=main_menu(),
         parse_mode=ParseMode.MARKDOWN
     )
     
+    # Уведомление админа
     await bot.send_message(
         ADMIN_ID,
-        f"Новая выдача: @{message.from_user.username}\nНомера: *{', '.join(results)}*\nКод: `{(base_code)}`"
+        f"✅ **Новая выдача**\nЮзер: @{message.from_user.username}\nНомера: {', '.join(valid_nums)}\nКод: `{(session_code)}`",
+        parse_mode=ParseMode.MARKDOWN
     )
     await state.clear()
 
-# --- Админ-панель ---
+# --- Админ Логика ---
 
 @dp.message(Command("admin"), F.from_user.id == ADMIN_ID)
 async def admin_panel(message: types.Message):
-    await message.answer("Панель администратора:", reply_markup=admin_menu())
+    await message.answer("Панель управления:", reply_markup=admin_menu())
 
 @dp.message(F.text == "Добавить ссылки", F.from_user.id == ADMIN_ID)
 async def ask_links(message: types.Message, state: FSMContext):
-    await message.answer("Введите список ссылок в формате:\n`№70: https://t.me/...`", parse_mode=ParseMode.MARKDOWN)
+    await message.answer("Пришлите список. Формат:\n`№70: https://t.me/...`", parse_mode=ParseMode.MARKDOWN)
     await state.set_state(AdminState.waiting_for_links)
 
 @dp.message(AdminState.waiting_for_links, F.from_user.id == ADMIN_ID)
@@ -178,46 +183,46 @@ async def process_bulk_links(message: types.Message, state: FSMContext):
     lines = message.text.split('\n')
     links_db = load_json(LINKS_FILE)
     count = 0
-    
     for line in lines:
         if ":" in line:
             parts = line.split(":", 1)
-            num_part = parts[0].replace("5 поток - №", "").replace("№", "").strip()
-            url_part = parts[1].strip()
-            if num_part and url_part.startswith("http"):
-                links_db[num_part] = url_part
+            # Чистим номер от лишних слов
+            num_raw = parts[0].lower().replace("№", "").replace("номер", "").replace("поток", "").strip()
+            # Оставляем только цифры для ключа
+            num_key = "".join(filter(str.isdigit, num_raw))
+            url = parts[1].strip()
+            if num_key and url.startswith("http"):
+                links_db[num_key] = url
                 count += 1
     
     save_json(LINKS_FILE, links_db)
-    await message.answer(f"База обновлена. Добавлено: *{count}*", reply_markup=admin_menu())
+    await message.answer(f"Загружено номеров: **{count}**", reply_markup=admin_menu(), parse_mode=ParseMode.MARKDOWN)
     await state.clear()
 
 @dp.message(F.text == "Очистить ссылки", F.from_user.id == ADMIN_ID)
 async def clear_all_links(message: types.Message):
     save_json(LINKS_FILE, {})
-    save_json(DB_FILE, {}) # Очищаем и базу занятых номеров
-    await message.answer("Все базы данных очищены.")
+    save_json(DB_FILE, {})
+    await message.answer("Базы данных ссылок и занятых номеров очищены.")
 
-# --- Поддержка ---
+# --- Обращения ---
 
 @dp.message(F.text == "Создать обращение")
 async def support_start(message: types.Message):
-    await message.answer("Отправьте ваш вопрос одним сообщением:")
+    await message.answer("Напишите ваш вопрос ниже:")
 
 @dp.message(F.chat.type == "private", F.from_user.id != ADMIN_ID, ~F.text.in_(["ПОЛУЧИТЬ ССЫЛКИ", "Создать обращение", "Главное меню"]))
 async def to_admin(message: types.Message):
-    info = f"*ОБРАЩЕНИЕ*\nID: `{(message.from_user.id)}` \nЮзер: @{message.from_user.username}\n\n"
+    info = f"❓ **ВОПРОС**\nID: `{(message.from_user.id)}` \nЮзер: @{message.from_user.username}\n\n"
     await bot.send_message(ADMIN_ID, info + message.text, parse_mode=ParseMode.MARKDOWN)
 
 @dp.message(F.from_user.id == ADMIN_ID, F.reply_to_message)
 async def from_admin(message: types.Message):
     try:
-        # Извлекаем ID из текста сообщения, на которое отвечаем
-        raw_id = message.reply_to_message.text.split("ID:")[1].split("\n")[0].strip()
-        user_id = int(''.join(filter(str.isdigit, raw_id)))
-        await bot.send_message(user_id, f"*ОТВЕТ АДМИНИСТРАТОРА:*\n\n{message.text}", parse_mode=ParseMode.MARKDOWN)
-    except:
-        pass
+        raw_text = message.reply_to_message.text
+        user_id = int(raw_text.split("ID:")[1].split("\n")[0].strip().replace('`', ''))
+        await bot.send_message(user_id, f"**ОТВЕТ АДМИНИСТРАТОРА:**\n\n{message.text}", parse_mode=ParseMode.MARKDOWN)
+    except: pass
 
 async def main():
     await dp.start_polling(bot)
