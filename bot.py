@@ -191,6 +191,31 @@ async def parse_and_save_links(content: str, links_db: dict):
             added_count += 1
     return added_count
 
+# --- ВСЕЯДНЫЙ ОБРАБОТЧИК (ФАЙЛЫ + ТЕКСТ) ---
+
+async def parse_and_save_links(content: str, links_db: dict):
+    lines = content.split('\n')
+    added_count = 0
+    for line in lines:
+        line = line.strip()
+        if not line: continue
+        
+        # Ищем ссылку
+        link_match = re.search(r'https?://\S+', line)
+        if link_match:
+            link = link_match.group(0)
+            # Ищем число для номера
+            num_match = re.search(r'(\d+)', line)
+            
+            if num_match:
+                num = num_match.group(1)
+                links_db[str(num)] = link
+            else:
+                curr_max = max([int(n) for n in links_db.keys() if n.isdigit()] or [0])
+                links_db[str(curr_max + 1)] = link
+            added_count += 1
+    return added_count
+
 @dp.message(AdminState.waiting_for_links, F.from_user.id == ADMIN_ID)
 async def admin_process_links_combined(message: types.Message, state: FSMContext):
     links_db = load_json(LINKS_FILE)
