@@ -4,7 +4,7 @@ import os
 import random
 import string
 import json
-import re  # Добавили для поиска ссылок и парсинга чисел
+import re  # ОБЯЗАТЕЛЬНО: добавили для поиска ссылок в тексте
 from dotenv import load_dotenv
 
 from aiogram import Bot, Dispatcher, types, F
@@ -65,14 +65,14 @@ def admin_menu():
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message, state: FSMContext):
     await state.clear()
-    await message.answer("Добро пожаловать! Воспользуйся меню:", reply_markup=main_menu())
+    await message.answer("Добро пожаловать!", reply_markup=main_menu())
 
 @dp.message(F.text == "🏠 Главное меню")
 async def back_home(message: types.Message, state: FSMContext):
     await state.clear()
     await message.answer("Главное меню:", reply_markup=main_menu())
 
-# --- ЛОГИКА ВЫДАЧИ (ТЕКСТОМ) ---
+# --- ЛОГИКА ДЛЯ ЮЗЕРА ---
 
 @dp.message(F.text == "🔗 ПОЛУЧИТЬ ССЫЛКИ")
 async def show_free_links_text(message: types.Message):
@@ -82,7 +82,7 @@ async def show_free_links_text(message: types.Message):
     # Проверка, нет ли уже ссылки
     for data in user_db.values():
         if data.get('user_id') == message.from_user.id:
-            return await message.answer(f"У тебя уже есть номер {data['num']}!\n🔗 Ссылка: {data['link']}")
+            return await message.answer(f"Твой номер {data['num']}!\n🔗 Ссылка: {data['link']}")
 
     if not links_db:
         return await message.answer("Свободных ссылок пока нет.")
@@ -95,7 +95,7 @@ async def show_free_links_text(message: types.Message):
 
     free_nums.sort()
     
-    # Формируем красивый список (например: 1-5, 10, 15-20)
+    # Группировка в диапазоны (1-10, 15, 20-30)
     ranges = []
     if free_nums:
         start = free_nums[0]
@@ -105,8 +105,8 @@ async def show_free_links_text(message: types.Message):
                 start = free_nums[i]
         ranges.append(f"{start}-{free_nums[-1]}" if start != free_nums[-1] else f"{start}")
 
-    text = "✅ <b>Свободные номера:</b>\n" + ", ".join(ranges)
-    text += "\n\nПиши номер или диапазон (например: <code>90</code> или <code>90-95</code>):"
+    text = "✅ <b>Свободно:</b>\n" + ", ".join(ranges)
+    text += "\n\nПиши номер (напр. <code>95</code>) или диапазон (<code>90-100</code>):"
     
     await message.answer(text, parse_mode=ParseMode.HTML)
 
@@ -115,69 +115,59 @@ async def process_text_selection(message: types.Message):
     links_db = load_json(LINKS_FILE)
     user_db = load_json(DB_FILE)
     
-    # Проверка на наличие ссылки
-    for data in user_db.values():
-        if data.get('user_id') == message.from_user.id:
-            return # Игнорируем, если уже есть
-
-    # Парсим ввод (поддерживает "90", "90-95", "90 91")
-    requested_nums = []
-    # Ищем диапазоны типа 90-95
-    ranges = re.findall(r'(\d+)\s*-\s*(\d+)', message.text)
-    for r in ranges:
-        for n in range(int(r[0]), int(r[1]) + 1):
-            requested_nums.append(str(n))
-    
-    # Ищем одиночные числа, которые не попали в диапазоны
-    singles = re.findall(r'\b\d+\b', message.text)
-    requested_nums.extend([n for n in singles if n not in requested_nums])
-
-    if not requested_nums:
+    # Если у юзера уже есть ссылка - игнорим
+    if any(d.get('user_id') == message.from_user.id for d in user_db.values()):
         return
+
+    # Парсим ввод: ищем диапазоны и одиночные числа
+    requested = []
+    found_ranges = re.findall(r'(\d+)\s*-\s*(\d+)', message.text)
+    for r in found_ranges:
+        for n in range(int(r[0]), int(r[1]) + 1):
+            requested.append(str(n))
+    
+    singles = re.findall(r'\b\d+\b', message.text)
+    for s in singles:
+        if s not in requested: requested.append(s)
+
+    if not requested: return
 
     taken_nums = [str(item['num']) for item in user_db.values()]
     
-    assigned = []
-    for num in requested_nums:
+    # Выдаем ОДНУ первую свободную ссылку из запрошенных
+    for num in requested:
         if num in links_db and num not in taken_nums:
-            # Выдаем первую попавшуюся свободную из списка
             unique_code = ''.join(random.choice(string.ascii_lowercase + string.digits) for _ in range(5))
             link = links_db[num]
             
             user_db[unique_code] = {
                 "user_id": message.from_user.id,
                 "num": num,
-                "username": message.from_user.username or "NoName",
+                "username": message.from_user.username or "User",
                 "link": link
             }
             save_json(DB_FILE, user_db)
             
-            await message.answer(
-                f"✅ <b>Номер {num} закреплен!</b>\n🔗 {link}\n🔑 Код: <code>{unique_code}</code>",
-                parse_mode=ParseMode.HTML
-            )
-            
-            await bot.send_message(ADMIN_ID, f"🔔 Новый трафер: @{message.from_user.username}\nНомер: {num}\nКод: {unique_code}")
-            return # Выдаем только ОДНУ ссылку за раз
+            await message.answer(f"✅ <b>Номер {num} выдан!</b>\n🔗 {link}\n🔑 Твой код: <code>{unique_code}</code>", parse_mode=ParseMode.HTML)
+            await bot.send_message(ADMIN_ID, f"🔔 Выдан номер {num} юзеру @{message.from_user.username}")
+            return
 
-    await message.answer("Выбранные номера заняты или не существуют. Попробуй другие.")
+    await message.answer("Эти номера заняты или их нет в базе.")
 
 # --- АДМИНКА ---
-
-@dp.message(Command("admin"), F.from_user.id == ADMIN_ID)
-async def admin_panel(message: types.Message):
-    await message.answer("Панель управления:", reply_markup=admin_menu())
 
 @dp.message(F.text == "📥 Добавить ссылки", F.from_user.id == ADMIN_ID)
 async def admin_add_start(message: types.Message, state: FSMContext):
     await state.set_state(AdminState.waiting_for_links)
-    await message.answer("Просто перешли список с сылками сюда. Бот сам их вытащит.")
+    await message.answer("Пришли сообщение с ссылками. Я вытащу их автоматически.")
 
 @dp.message(AdminState.waiting_for_links, F.from_user.id == ADMIN_ID)
 async def admin_process_links(message: types.Message, state: FSMContext):
+    # Теперь ищем ссылки ВНУТРИ текста, а не только в начале строки
     links_found = re.findall(r'(https?://[^\s]+)', message.text)
+    
     if not links_found:
-        return await message.answer("Ссылок не найдено.")
+        return await message.answer("Ссылок не найдено. Проверь формат.")
 
     links_db = load_json(LINKS_FILE)
     curr_max = 0
@@ -185,12 +175,13 @@ async def admin_process_links(message: types.Message, state: FSMContext):
         nums = [int(n) for n in links_db.keys() if n.isdigit()]
         if nums: curr_max = max(nums)
 
+    # Добавляем новые ссылки, продолжая нумерацию
     for i, link in enumerate(links_found, start=curr_max + 1):
         links_db[str(i)] = link
     
     save_json(LINKS_FILE, links_db)
     await state.clear()
-    await message.answer(f"✅ Добавлено {len(links_found)} ссылок.", reply_markup=admin_menu())
+    await message.answer(f"✅ Добавлено {len(links_found)} ссылок. Всего в базе: {len(links_db)}", reply_markup=admin_menu())
 
 @dp.message(F.text == "📊 Статус ссылок", F.from_user.id == ADMIN_ID)
 async def admin_status(message: types.Message):
@@ -204,16 +195,13 @@ async def admin_status(message: types.Message):
         status = f"❌ (@{taken[n]})" if n in taken else "✅"
         report += f"{n}: {status}\n"
     
-    if len(report) > 4000: # Защита от слишком длинных сообщений
-        await message.answer("База слишком большая, скину файлом позже.")
-    else:
-        await message.answer(report, parse_mode=ParseMode.HTML)
+    await message.answer(report[:4000], parse_mode=ParseMode.HTML)
 
 @dp.message(F.text == "🧹 Очистить ссылки", F.from_user.id == ADMIN_ID)
 async def clear_all(message: types.Message):
     save_json(LINKS_FILE, {})
     save_json(DB_FILE, {})
-    await message.answer("Все очищено.")
+    await message.answer("База очищена.")
 
 async def main():
     await bot.delete_webhook(drop_pending_updates=True)
