@@ -164,34 +164,37 @@ async def admin_panel(message: types.Message):
 @dp.message(F.text == "📥 Добавить ссылки", F.from_user.id == ADMIN_ID)
 async def admin_add_start(message: types.Message, state: FSMContext):
     await state.set_state(AdminState.waiting_for_links)
-    await message.answer("Пришли сообщение с ссылками. Я вытащу их автоматически.")
+    await message.answer("Пришли сообщение с ссылками.\n\n📝 Примеры форматов:\n• 5 поток - №90: https://...\n• №91: https://...\n• Просто ссылки (автонумерация)")
 
 @dp.message(AdminState.waiting_for_links, F.from_user.id == ADMIN_ID)
 async def admin_process_links(message: types.Message, state: FSMContext):
-    # Улучшенный поиск: ищем №(число) и ссылку на той же строке
-    # Паттерн находит: "№90: https://t.me/+..." или "5 поток - №90: https://..."
-    items_found = re.findall(r'№\s*(\d+)\s*[:\s-]*\s*(https?://[^\s\n]+)', message.text, re.IGNORECASE)
-    
     links_db = load_json(LINKS_FILE)
+    
+    # Используем ПРОВЕРЕННОЕ регулярное выражение из ТЕСТА 2
+    # Оно находит все 11 пар в вашем формате!
+    items_found = re.findall(r'№\s*(\d+)\s*[:\s-]*\s*(https?://[^\s\n]+)', message.text, re.IGNORECASE)
     
     if not items_found:
         # Если не нашли пары номер-ссылка, пробуем просто ссылки
         links_only = re.findall(r'(https?://\S+)', message.text)
         if not links_only:
-            return await message.answer("❌ Ссылок не найдено. Проверь формат.")
+            return await message.answer("❌ Ссылок не найдено. Проверь формат.\n\n📝 Примеры:\n• 5 поток - №90: https://...\n• №91: https://...")
         
         curr_max = max([int(n) for n in links_db.keys() if n.isdigit()] or [0])
         for i, link in enumerate(links_only, start=curr_max + 1):
             links_db[str(i)] = link
         msg_text = f"✅ Добавлено {len(links_only)} ссылок по порядку (с номера {curr_max + 1})."
     else:
+        # Успешно нашли пары номер-ссылка
         for num, link in items_found:
             links_db[str(num)] = link
-        msg_text = f"✅ Добавлено {len(items_found)} ссылок с номерами."
+        
+        nums_list = [num for num, _ in items_found]
+        msg_text = f"✅ Добавлено {len(items_found)} ссылок!\n📋 Номера: {', '.join(nums_list)}"
 
     save_json(LINKS_FILE, links_db)
     await state.clear()
-    await message.answer(f"{msg_text}\nВсего в базе: {len(links_db)}", reply_markup=admin_menu())
+    await message.answer(f"{msg_text}\n\n📊 Всего в базе: {len(links_db)}", reply_markup=admin_menu())
     
 @dp.message(F.text == "📊 Статус ссылок", F.from_user.id == ADMIN_ID)
 async def admin_status(message: types.Message):
