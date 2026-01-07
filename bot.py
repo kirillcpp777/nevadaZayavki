@@ -4,6 +4,7 @@ import os
 import random
 import string
 import json
+import re  # ДОБАВИЛИ!
 from dotenv import load_dotenv
 
 from aiogram import Bot, Dispatcher, types, F
@@ -58,8 +59,8 @@ def main_menu():
 def admin_menu():
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="📥 Добавить ссылки"), KeyboardButton(text="🧹 Очистить ссылки")],
-            [KeyboardButton(text="🏠 Главное меню")]
+            [KeyboardButton(text="📥 Добавить ссылки"), KeyboardButton(text="📊 Статус ссылок")],
+            [KeyboardButton(text="🧹 Очистить ссылки"), KeyboardButton(text="🏠 Главное меню")]
         ],
         resize_keyboard=True
     )
@@ -159,33 +160,81 @@ async def admin_panel(message: types.Message):
 
 @dp.message(F.text == "📥 Добавить ссылки", F.from_user.id == ADMIN_ID)
 async def ask_links(message: types.Message, state: FSMContext):
-    await message.answer("Отправь список ссылок. Формат:\n<code>5 поток - №70: https://t.me/...</code>", parse_mode=ParseMode.HTML)
+    await message.answer(
+        "Отправь список ссылок.\n\n📝 Примеры форматов:\n"
+        "• 5 поток - №90: https://...\n"
+        "• №91: https://...\n"
+        "• Просто ссылки (автонумерация)",
+        parse_mode=ParseMode.HTML
+    )
     await state.set_state(AdminState.waiting_for_links)
 
 @dp.message(AdminState.waiting_for_links, F.from_user.id == ADMIN_ID)
 async def process_bulk_links(message: types.Message, state: FSMContext):
-    lines = message.text.split('\n')
     links_db = load_json(LINKS_FILE)
-    count = 0
     
-    for line in lines:
-        if ":" in line:
-            # Парсим номер: убираем лишний текст до двоеточия
-            parts = line.split(":", 1)
-            num_part = parts[0].replace("5 поток - №", "").replace("№", "").strip()
-            url_part = parts[1].strip()
-            if num_part and url_part.startswith("http"):
-                links_db[num_part] = url_part
-                count += 1
+    # ИСПОЛЬЗУЕМ ПРОВЕРЕННОЕ РЕГУЛЯРНОЕ ВЫРАЖЕНИЕ ИЗ ТЕСТА 2!
+    items_found = re.findall(r'№\s*(\d+)\s*[:\s-]*\s*(https?://[^\s\n]+)', message.text, re.IGNORECASE)
+    
+    if not items_found:
+        # Если не нашли пары номер-ссылка, пробуем просто ссылки
+        links_only = re.findall(r'(https?://\S+)', message.text)
+        if not links_only:
+            await state.clear()
+            return await message.answer(
+                "❌ Ссылок не найдено. Проверь формат.\n\n"
+                "📝 Примеры:\n• 5 поток - №90: https://...\n• №91: https://...",
+                reply_markup=admin_menu()
+            )
+        
+        curr_max = max([int(n) for n in links_db.keys() if n.isdigit()] or [0])
+        for i, link in enumerate(links_only, start=curr_max + 1):
+            links_db[str(i)] = link
+        msg_text = f"✅ Добавлено {len(links_only)} ссылок по порядку (с номера {curr_max + 1})."
+    else:
+        # Успешно нашли пары номер-ссылка
+        for num, link in items_found:
+            links_db[str(num)] = link
+        
+        nums_list = [num for num, _ in items_found]
+        msg_text = f"✅ Добавлено {len(items_found)} ссылок!\n📋 Номера: {', '.join(nums_list)}"
     
     save_json(LINKS_FILE, links_db)
-    await message.answer(f"✅ Успешно загружено ссылок: {count}", reply_markup=admin_menu())
     await state.clear()
+    await message.answer(f"{msg_text}\n\n📊 Всего в базе: {len(links_db)}", reply_markup=admin_menu())
+
+@dp.message(F.text == "📊 Статус ссылок", F.from_user.id == ADMIN_ID)
+async def admin_status(message: types.Message):
+    links_db = load_json(LINKS_FILE)
+    user_db = load_json(DB_FILE)
+    
+    if not links_db:
+        return await message.answer("База пуста.")
+    
+    taken = {item['num']: item['username'] for item in user_db.values()}
+    report = "<b>📊 Статус базы ссылок:</b>\n\n"
+    
+    # Правильная числовая сортировка
+    sorted_nums = sorted(links_db.keys(), key=lambda x: int(x) if x.isdigit() else 999999)
+    
+    for n in sorted_nums:
+        status = f"❌ @{taken[n]}" if n in taken else "✅ свободен"
+        link = links_db[n]
+        report += f"<b>№{n}:</b> {status}\n<code>{link}</code>\n\n"
+    
+    # Отправляем по частям если слишком длинно
+    if len(report) > 4000:
+        parts = [report[i:i+4000] for i in range(0, len(report), 4000)]
+        for part in parts:
+            await message.answer(part, parse_mode=ParseMode.HTML)
+    else:
+        await message.answer(report, parse_mode=ParseMode.HTML)
 
 @dp.message(F.text == "🧹 Очистить ссылки", F.from_user.id == ADMIN_ID)
 async def clear_all_links(message: types.Message):
     save_json(LINKS_FILE, {})
-    await message.answer("🗑 Все ссылки удалены из базы данных.")
+    save_json(DB_FILE, {})
+    await message.answer("🗑 Все ссылки и регистрации удалены из базы данных.", reply_markup=admin_menu())
 
 # --- Рассылка статы и поддержка (твой старый код) ---
 
