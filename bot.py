@@ -135,7 +135,7 @@ async def process_num(message: types.Message, state: FSMContext):
     data = await state.get_data()
     session_code = data['temp_code']
     
-    response_msg = "<b>Готово! Ваши ссылки:</b>\n\n"
+    response_msg = "<b>Ваши ссылки:</b>\n\n"
     for idx, num in enumerate(valid_nums):
         link = links_db[num]
         # Каждая ссылка сохраняется под уникальным ключом для статы
@@ -146,7 +146,7 @@ async def process_num(message: types.Message, state: FSMContext):
             "username": message.from_user.username or "none",
             "link": link
         }
-        response_msg += f"🔢 Номер <b>{num}</b>: {link}\n"
+        response_msg += f" Номер <b>{num}</b>: {link}\n"
 
     save_json(DB_FILE, user_db)
     
@@ -223,7 +223,7 @@ async def admin_send_stats(message: types.Message):
             await bot.send_photo(
                 target_user_id,
                 message.photo[-1].file_id,
-                caption="<b>📊 Ваша статистика готова!</b>",
+                caption="<b>📊 Вам пришла статистика!</b>",
                 parse_mode=ParseMode.HTML
             )
             await message.answer(f"✅ Статистика по коду <code>{code}</code> отправлена.")
