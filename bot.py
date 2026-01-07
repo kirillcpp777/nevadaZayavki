@@ -171,36 +171,35 @@ async def admin_process_links(message: types.Message, state: FSMContext):
     links_db = load_json(LINKS_FILE)
     text = message.text or ""
     
-    # 1. Пробуем найти явные пары: Номер + Ссылка
-    # Шаблон ищет: №96: ссылка, 96 - ссылка, № 96 ссылка и т.д.
-    items_found = re.findall(r'(?:№|#|номер)?\s*(\d+)\s*[:\s-]*\s*(https?://\S+)', text, re.IGNORECASE)
+    # Разрезаем сообщение на строки, чтобы обрабатывать каждую отдельно
+    lines = text.split('\n')
+    added_count = 0
     
-    if items_found:
-        for num, link in items_found:
-            links_db[str(num)] = link
-        msg_text = f"✅ Добавлено {len(items_found)} ссылок по номерам."
+    for line in lines:
+        # Ищем ссылку в строке
+        link_match = re.search(r'https?://\S+', line)
+        if link_match:
+            link = link_match.group(0)
+            # Ищем число (номер) в этой же строке
+            num_match = re.search(r'(\d+)', line)
+            
+            if num_match:
+                # Если нашли число — используем его как номер
+                num = num_match.group(1)
+                links_db[str(num)] = link
+                added_count += 1
+            else:
+                # Если числа в строке нет — автонумерация (берем следующий свободный)
+                curr_max = max([int(n) for n in links_db.keys() if n.isdigit()] or [0])
+                links_db[str(curr_max + 1)] = link
+                added_count += 1
+
+    if added_count > 0:
+        save_json(LINKS_FILE, links_db)
+        await state.clear()
+        await message.answer(f"✅ Готово! Добавлено: {added_count}\n📊 Всего в базе: {len(links_db)}", reply_markup=admin_menu())
     else:
-        # 2. Если пар не нашли, ищем просто любые ссылки в сообщении
-        links_only = []
-        if message.entities:
-            for entity in message.entities:
-                if entity.type == "url":
-                    links_only.append(text[entity.offset:entity.offset+entity.length])
-                elif entity.type == "text_link":
-                    links_only.append(entity.url)
-        
-        if not links_only:
-            return await message.answer("❌ Ссылок не найдено. Убедитесь, что номер и ссылка указаны в одной строке.")
-
-        # Автонумерация
-        curr_max = max([int(n) for n in links_db.keys() if n.isdigit()] or [0])
-        for i, link in enumerate(links_only, start=curr_max + 1):
-            links_db[str(i)] = link
-        msg_text = f"✅ Добавлено {len(links_only)} ссылок через автонумерацию (с {curr_max + 1})."
-
-    save_json(LINKS_FILE, links_db)
-    await state.clear()
-    await message.answer(f"{msg_text}\n📊 Всего: {len(links_db)}", reply_markup=admin_menu())
+        await message.answer("❌ Брат, я не нашел тут ни одной ссылки. Попробуй еще раз.")
     
 @dp.message(F.text == "📊 Статус ссылок", F.from_user.id == ADMIN_ID)
 async def admin_status(message: types.Message):
