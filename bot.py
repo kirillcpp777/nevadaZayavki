@@ -118,22 +118,23 @@ async def process_num(message: types.Message, state: FSMContext):
             if start_n > end_n: start_n, end_n = end_n, start_n
             requested_nums = [str(i) for i in range(start_n, end_n + 1)]
         except:
-            return await message.answer("Ошибка формата. Введите например `96-100`.")
+            return await message.answer("Ошибка формата. Введите например 96-100.")
     else:
         requested_nums = [input_text]
 
     valid_nums = []
     for n in requested_nums:
         if n not in links_db:
-            return await message.answer(f"Номер **{n}** отсутствует в базе.")
+            return await message.answer(f"Номер <b>{n}</b> отсутствует в базе.", parse_mode=ParseMode.HTML)
         if n in taken_nums:
-            return await message.answer(f"Номер **{n}** уже занят.")
+            return await message.answer(f"Номер <b>{n}</b> уже занят.", parse_mode=ParseMode.HTML)
         valid_nums.append(n)
 
     data = await state.get_data()
     session_code = data['temp_code']
     
-    response_msg = "**Готово! Ваши ссылки:**\n\n"
+    # Используем HTML теги <b> и <code>
+    response_msg = "<b>Готово! Ваши ссылки:</b>\n\n"
     for idx, num in enumerate(valid_nums):
         link = links_db[num]
         record_id = f"{session_code}_{idx}" if len(valid_nums) > 1 else session_code
@@ -143,12 +144,22 @@ async def process_num(message: types.Message, state: FSMContext):
             "username": message.from_user.username or "none",
             "link": link
         }
-        response_msg += f"🔢 Номер **{num}**: {link}\n"
+        response_msg += f"🔢 Номер <b>{num}</b>: {link}\n"
 
     save_json(DB_FILE, user_db)
-    await message.answer(f"{response_msg}\nКод сессии: `{(session_code)}`", reply_markup=main_menu(), parse_mode=ParseMode.MARKDOWN)
     
-    await bot.send_message(ADMIN_ID, f"✅ Выдача: @{message.from_user.username}\nНомера: {', '.join(valid_nums)}\nКод: `{(session_code)}`", parse_mode=ParseMode.MARKDOWN)
+    # Код сессии в <code> для копирования нажатием
+    await message.answer(
+        f"{response_msg}\nКод сессии: <code>{session_code}</code>", 
+        reply_markup=main_menu(), 
+        parse_mode=ParseMode.HTML
+    )
+    
+    await bot.send_message(
+        ADMIN_ID, 
+        f"✅ Выдача: @{message.from_user.username}\nНомера: {', '.join(valid_nums)}\nКод: <code>{session_code}</code>", 
+        parse_mode=ParseMode.HTML
+    )
     await state.clear()
 
 # --- Админка ---
