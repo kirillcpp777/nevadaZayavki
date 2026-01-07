@@ -168,12 +168,14 @@ async def admin_add_start(message: types.Message, state: FSMContext):
 
 @dp.message(AdminState.waiting_for_links, F.from_user.id == ADMIN_ID)
 async def admin_process_links(message: types.Message, state: FSMContext):
-    # Улучшенный поиск: №(число) любой_текст (ссылка)
-    items_found = re.findall(r'№(\d+).*?(https?://\S+)', message.text, re.DOTALL)
+    # Улучшенный поиск: ищем №(число) в любом месте строки, затем ссылку
+    # Паттерн теперь находит: "5 поток - №90: https://..."
+    items_found = re.findall(r'№\s*(\d+)[^\n]*?(https?://\S+)', message.text, re.IGNORECASE)
     
     links_db = load_json(LINKS_FILE)
     
     if not items_found:
+        # Если не нашли пары номер-ссылка, пробуем просто ссылки
         links_only = re.findall(r'(https?://\S+)', message.text)
         if not links_only:
             return await message.answer("❌ Ссылок не найдено. Проверь формат.")
@@ -181,11 +183,11 @@ async def admin_process_links(message: types.Message, state: FSMContext):
         curr_max = max([int(n) for n in links_db.keys() if n.isdigit()] or [0])
         for i, link in enumerate(links_only, start=curr_max + 1):
             links_db[str(i)] = link
-        msg_text = f"✅ Добавлено {len(links_only)} ссылок по порядку."
+        msg_text = f"✅ Добавлено {len(links_only)} ссылок по порядку (с номера {curr_max + 1})."
     else:
         for num, link in items_found:
             links_db[str(num)] = link
-        msg_text = f"✅ Добавлено {len(items_found)} ссылок с вашими номерами."
+        msg_text = f"✅ Добавлено {len(items_found)} ссылок с номерами."
 
     save_json(LINKS_FILE, links_db)
     await state.clear()
