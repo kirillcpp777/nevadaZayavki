@@ -161,7 +161,7 @@ async def admin_add_start(message: types.Message, state: FSMContext):
     await state.set_state(AdminState.waiting_for_links)
     await message.answer("Пришли сообщение с ссылками. Я вытащу их автоматически.")
 
-@@dp.message(AdminState.waiting_for_links, F.from_user.id == ADMIN_ID)
+@dp.message(AdminState.waiting_for_links, F.from_user.id == ADMIN_ID)
 async def admin_process_links(message: types.Message, state: FSMContext):
     # Регулярное выражение ищет номер после знака № и ссылку в этой же строке
     # Находит пары типа: ('90', 'https://t.me/...')
