@@ -156,6 +156,11 @@ async def process_text_selection(message: types.Message):
 
 # --- АДМИНКА ---
 
+# Вход в админку
+@dp.message(Command("admin"), F.from_user.id == ADMIN_ID)
+async def admin_panel(message: types.Message):
+    await message.answer("🤖 Вы вошли в режим администратора", reply_markup=admin_menu())
+
 @dp.message(F.text == "📥 Добавить ссылки", F.from_user.id == ADMIN_ID)
 async def admin_add_start(message: types.Message, state: FSMContext):
     await state.set_state(AdminState.waiting_for_links)
@@ -163,26 +168,21 @@ async def admin_add_start(message: types.Message, state: FSMContext):
 
 @dp.message(AdminState.waiting_for_links, F.from_user.id == ADMIN_ID)
 async def admin_process_links(message: types.Message, state: FSMContext):
-    # Новое регулярное выражение:
-    # 1. №(\d+) — ищет знак № и сохраняет идущие за ним цифры
-    # 2. .*? — лениво пропускает любой текст (двоеточия, тире, пробелы)
-    # 3. (https?://\S+) — ищет и сохраняет ссылку до ближайшего пробела
+    # Улучшенный поиск: №(число) любой_текст (ссылка)
     items_found = re.findall(r'№(\d+).*?(https?://\S+)', message.text, re.DOTALL)
     
     links_db = load_json(LINKS_FILE)
     
     if not items_found:
-        # Если формат №номер не найден, пробуем найти просто ссылки без привязки к номерам
         links_only = re.findall(r'(https?://\S+)', message.text)
         if not links_only:
-            return await message.answer("Ссылок не найдено. Проверь формат.")
+            return await message.answer("❌ Ссылок не найдено. Проверь формат.")
         
         curr_max = max([int(n) for n in links_db.keys() if n.isdigit()] or [0])
         for i, link in enumerate(links_only, start=curr_max + 1):
             links_db[str(i)] = link
         msg_text = f"✅ Добавлено {len(links_only)} ссылок по порядку."
     else:
-        # Если пары №номер-ссылка найдены, записываем их строго под этими номерами
         for num, link in items_found:
             links_db[str(num)] = link
         msg_text = f"✅ Добавлено {len(items_found)} ссылок с вашими номерами."
