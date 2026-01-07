@@ -5,6 +5,7 @@ import random
 import string
 import json
 from dotenv import load_dotenv
+import re
 
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart, Command
@@ -188,22 +189,32 @@ async def start_add_links(message: types.Message, state: FSMContext):
 
 @dp.message(AdminState.waiting_for_links, F.from_user.id == ADMIN_ID)
 async def process_adding_links(message: types.Message, state: FSMContext):
-    new_links = [l.strip() for l in message.text.split('\n') if l.strip().startswith('http')]
-    if not new_links:
+    # Ищем все подстроки, похожие на ссылки (начинаются с http)
+    links_found = re.findall(r'(https?://[^\s]+)', message.text)
+    
+    if not links_found:
         return await message.answer("Ссылок не найдено. Попробуй еще раз.")
 
     links_db = load_json(LINKS_FILE)
+    
+    # Определяем начальный индекс для нумерации
     start_idx = 1
     if links_db:
         nums = [int(n) for n in links_db.keys() if n.isdigit()]
-        if nums: start_idx = max(nums) + 1
+        if nums: 
+            start_idx = max(nums) + 1
 
-    for i, link in enumerate(new_links, start=start_idx):
+    # Сохраняем только чистые ссылки
+    for i, link in enumerate(links_found, start=start_idx):
         links_db[str(i)] = link
     
     save_json(LINKS_FILE, links_db)
     await state.clear()
-    await message.answer(f"✅ Добавлено {len(new_links)} ссылок. Всего в базе: {len(links_db)}")
+    await message.answer(
+        f"✅ Успешно! Из текста извлечено и добавлено {len(links_found)} ссылок.\n"
+        f"Всего в базе: {len(links_db)}", 
+        reply_markup=admin_menu()
+    )
 
 @dp.message(F.text == "🧹 Очистить ссылки", F.from_user.id == ADMIN_ID)
 async def clear_links(message: types.Message):
