@@ -61,6 +61,7 @@ def admin_menu():
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="Добавить ссылки"), KeyboardButton(text="Очистить ссылки")],
+            [KeyboardButton(text="Рассылка по ID (инфо)")], # Новая кнопка
             [KeyboardButton(text="🏠 Главное меню")]
         ],
         resize_keyboard=True
@@ -167,6 +168,40 @@ async def process_num(message: types.Message, state: FSMContext):
 @dp.message(Command("admin"), F.from_user.id == ADMIN_ID)
 async def admin_panel(message: types.Message):
     await message.answer("Управление ботом:", reply_markup=admin_menu())
+
+# Подсказка по команде при нажатии на кнопку
+@dp.message(F.text == "Рассылка по ID (инфо)", F.from_user.id == ADMIN_ID)
+async def go_info(message: types.Message):
+    await message.answer(
+        "Чтобы отправить сообщение пользователю, используйте команду:\n"
+        "<code>/go 12345678 Привет, это сообщение для тебя!</code>",
+        parse_mode=ParseMode.HTML
+    )
+
+# Сама команда рассылки
+@dp.message(Command("go"), F.from_user.id == ADMIN_ID)
+async def cmd_go(message: types.Message):
+    # Разбиваем текст сообщения: /go (0), id (1), сообщение (2+)
+    parts = message.text.split(maxsplit=2)
+    
+    if len(parts) < 3:
+        return await message.answer("❌ Ошибка! Формат: <code>/go {ID} {сообщение}</code>", parse_mode=ParseMode.HTML)
+    
+    target_id = parts[1]
+    text_to_send = parts[2]
+    
+    if not target_id.isdigit():
+        return await message.answer("❌ Ошибка! ID должен состоять только из цифр.")
+
+    try:
+        await bot.send_message(
+            chat_id=int(target_id),
+            text=f"<b>📩 Сообщение от администратора:</b>\n\n{text_to_send}",
+            parse_mode=ParseMode.HTML
+        )
+        await message.answer(f"✅ Сообщение успешно отправлено пользователю <code>{target_id}</code>")
+    except Exception as e:
+        await message.answer(f"❌ Не удалось отправить сообщение.\nОшибка: {e}")
 
 @dp.message(F.text == "Добавить ссылки", F.from_user.id == ADMIN_ID)
 async def ask_links(message: types.Message, state: FSMContext):
