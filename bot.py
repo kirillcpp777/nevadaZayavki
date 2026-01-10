@@ -14,45 +14,65 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 
-# Загрузка переменных окружения
+# ================== НАСТРОЙКИ ==================
+
 load_dotenv()
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_IDS").split(",")[0])
 
 logging.basicConfig(level=logging.INFO)
+
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
-# Файлы базы данных
 DB_FILE = "data_storage.json"
 LINKS_FILE = "links.json"
+ALLOWED_TRAINERS_FILE = "allowed_trainers.json"
 
-# --- Функции работы с JSON ---
-def load_json(file_path):
-    if os.path.exists(file_path):
-        with open(file_path, "r", encoding="utf-8") as f:
+# ================== JSON ==================
+
+def load_json(path):
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as f:
             try:
                 return json.load(f)
-            except: return {}
+            except:
+                return {}
     return {}
 
-def save_json(file_path, data):
-    with open(file_path, "w", encoding="utf-8") as f:
+def save_json(path, data):
+    with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
 
-# Состояния FSM
+def load_allowed_trainers():
+    data = load_json(ALLOWED_TRAINERS_FILE)
+    if not data:
+        data = ["7869425813"]
+        save_json(ALLOWED_TRAINERS_FILE, data)
+    return data
+
+# ================== FSM ==================
+
 class RegState(StatesGroup):
     waiting_for_num = State()
 
 class AdminState(StatesGroup):
     waiting_for_links = State()
 
-# --- Клавиатуры ---
+class ReportState(StatesGroup):
+    waiting_for_username = State()
+
+class AdminAddTrainerState(StatesGroup):
+    waiting_for_id = State()
+
+# ================== КЛАВИАТУРЫ ==================
+
 def main_menu():
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="Создать обращение")],
-            [KeyboardButton(text="ПОЛУЧИТЬ ССЫЛКИ")]
+            [KeyboardButton(text="ПОЛУЧИТЬ ССЫЛКИ")],
+            [KeyboardButton(text="Я обучил человека")],
+            [KeyboardButton(text="Создать обращение")]
         ],
         resize_keyboard=True
     )
@@ -61,227 +81,185 @@ def admin_menu():
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="Добавить ссылки"), KeyboardButton(text="Очистить ссылки")],
-            [KeyboardButton(text="Рассылка по ID (инфо)")], # Новая кнопка
+            [KeyboardButton(text="➕ Добавить ID обучающего")],
+            [KeyboardButton(text="Рассылка по ID (инфо)")],
             [KeyboardButton(text="🏠 Главное меню")]
         ],
         resize_keyboard=True
     )
 
-# --- Обработчики пользователя ---
+# ================== START ==================
 
 @dp.message(CommandStart())
-async def cmd_start(message: types.Message, state: FSMContext):
+async def start(message: types.Message, state: FSMContext):
     await state.clear()
-    await message.answer("Используйте кнопки меню для работы с ботом:", reply_markup=main_menu())
+    await message.answer("Главное меню:", reply_markup=main_menu())
 
 @dp.message(F.text == "🏠 Главное меню")
-async def back_to_main(message: types.Message, state: FSMContext):
+async def back(message: types.Message, state: FSMContext):
     await state.clear()
-    await message.answer("Вы вернулись в меню:", reply_markup=main_menu())
+    await message.answer("Главное меню:", reply_markup=main_menu())
+
+# ================== ССЫЛКИ ==================
 
 @dp.message(F.text == "ПОЛУЧИТЬ ССЫЛКИ")
-async def start_reg(message: types.Message, state: FSMContext):
+async def get_links(message: types.Message, state: FSMContext):
     links_db = load_json(LINKS_FILE)
     if not links_db:
-        return await message.answer("База ссылок пуста. Обратитесь к администратору.")
+        return await message.answer("❌ Ссылок нет")
 
     user_db = load_json(DB_FILE)
-    taken_nums = [str(item['num']) for item in user_db.values()]
-    free_nums = sorted([n for n in links_db.keys() if n not in taken_nums], key=lambda x: int(x) if x.isdigit() else 0)
-    
-    if not free_nums:
-        return await message.answer("Все доступные номера уже заняты.")
+    taken = [str(v["num"]) for v in user_db.values()]
+    free = [k for k in links_db.keys() if k not in taken]
 
-    unique_code = ''.join(random.choice(string.ascii_lowercase + string.digits) for _ in range(5))
-    available_preview = ", ".join(free_nums[:15])
-    
+    if not free:
+        return await message.answer("❌ Все номера заняты")
+
+    code = ''.join(random.choice(string.ascii_lowercase + string.digits) for _ in range(5))
+    await state.update_data(code=code)
+
     await message.answer(
-        f"<b>Доступные номера:</b> {available_preview}...\n\n"
-        f"Введите номер (напр. <code>96</code>) или диапазон (напр. <code>96-100</code>):",
-        parse_mode=ParseMode.HTML,
+        "Введите номер или диапазон (пример: 10 или 10-15)",
         reply_markup=ReplyKeyboardRemove()
     )
-    await state.update_data(temp_code=unique_code)
     await state.set_state(RegState.waiting_for_num)
 
 @dp.message(RegState.waiting_for_num)
-async def process_num(message: types.Message, state: FSMContext):
-    input_text = message.text.strip().replace(" ", "")
+async def process_nums(message: types.Message, state: FSMContext):
+    text = message.text.replace(" ", "")
     links_db = load_json(LINKS_FILE)
     user_db = load_json(DB_FILE)
-    taken_nums = {str(item['num']): True for item in user_db.values()}
-    
-    requested_nums = []
-    
-    # Парсинг диапазона или одного номера
-    if "-" in input_text:
-        try:
-            parts = input_text.split("-")
-            start_n, end_n = int(parts[0]), int(parts[1])
-            if start_n > end_n: start_n, end_n = end_n, start_n
-            requested_nums = [str(i) for i in range(start_n, end_n + 1)]
-        except:
-            return await message.answer("Ошибка формата. Введите например 96-100.")
-    else:
-        requested_nums = [input_text]
 
-    valid_nums = []
-    for n in requested_nums:
+    nums = []
+    if "-" in text:
+        a, b = map(int, text.split("-"))
+        nums = [str(i) for i in range(min(a,b), max(a,b)+1)]
+    else:
+        nums = [text]
+
+    for n in nums:
         if n not in links_db:
-            return await message.answer(f"Номер <b>{n}</b> отсутствует в базе.", parse_mode=ParseMode.HTML)
-        if n in taken_nums:
-            return await message.answer(f"Номер <b>{n}</b> уже занят.", parse_mode=ParseMode.HTML)
-        valid_nums.append(n)
+            return await message.answer(f"❌ Номер {n} не существует")
 
     data = await state.get_data()
-    session_code = data['temp_code']
-    
-    response_msg = "<b>Ваши ссылки:</b>\n\n"
-    for idx, num in enumerate(valid_nums):
-        link = links_db[num]
-        # Каждая ссылка сохраняется под уникальным ключом для статы
-        record_id = f"{session_code}_{idx}" if len(valid_nums) > 1 else session_code
-        user_db[record_id] = {
+    code = data["code"]
+
+    msg = "<b>Ваши ссылки:</b>\n\n"
+    for i, n in enumerate(nums):
+        user_db[f"{code}_{i}"] = {
             "user_id": message.from_user.id,
-            "num": num,
-            "username": message.from_user.username or "none",
-            "link": link
+            "num": n,
+            "username": message.from_user.username,
+            "link": links_db[n]
         }
-        response_msg += f" Номер <b>{num}</b>: {link}\n"
+        msg += f"{n}: {links_db[n]}\n"
 
     save_json(DB_FILE, user_db)
-    
-    await message.answer(response_msg, reply_markup=main_menu(), parse_mode=ParseMode.HTML)
-    
-    # Уведомление админу (с кодом для статы)
+
+    await message.answer(msg, parse_mode=ParseMode.HTML, reply_markup=main_menu())
     await bot.send_message(
-        ADMIN_ID, 
-        f"✅ <b>Выдача:</b> @{message.from_user.username}\n"
-        f"🔢 Номера: {', '.join(valid_nums)}\n"
-        f"🔑 Код для статы: <code>{session_code}</code>", 
-        parse_mode=ParseMode.HTML
+        ADMIN_ID,
+        f"✅ Выдача @{message.from_user.username}\nНомера: {', '.join(nums)}\nКод: {code}"
     )
     await state.clear()
 
-# --- Админ-панель ---
+# ================== ОБУЧЕНИЕ ==================
 
-@dp.message(Command("admin"), F.from_user.id == ADMIN_ID)
-async def admin_panel(message: types.Message):
-    await message.answer("Управление ботом:", reply_markup=admin_menu())
+@dp.message(F.text == "Я обучил человека")
+async def report_start(message: types.Message, state: FSMContext):
+    allowed = load_allowed_trainers()
+    if str(message.from_user.id) not in allowed:
+        return await message.answer("❌ У тебя нет доступа")
 
-# Подсказка по команде при нажатии на кнопку
-@dp.message(F.text == "Рассылка по ID (инфо)", F.from_user.id == ADMIN_ID)
-async def go_info(message: types.Message):
     await message.answer(
-        "Чтобы отправить сообщение пользователю, используйте команду:\n"
-        "<code>/go 12345678 Привет, это сообщение для тебя!</code>",
-        parse_mode=ParseMode.HTML
+        "Напиши @username обученного\nПример: @dsaads",
+        reply_markup=ReplyKeyboardRemove()
+    )
+    await state.set_state(ReportState.waiting_for_username)
+
+@dp.message(ReportState.waiting_for_username)
+async def report_finish(message: types.Message, state: FSMContext):
+    if not re.match(r'^@[\w\d_]{3,}$', message.text):
+        return await message.answer("❌ Неверный формат")
+
+    await bot.send_message(
+        ADMIN_ID,
+        f"🔥 ОБУЧЕНИЕ\n"
+        f"От: @{message.from_user.username}\n"
+        f"ID: {message.from_user.id}\n"
+        f"Обучил: {message.text}"
     )
 
-# Сама команда рассылки
-@dp.message(Command("go"), F.from_user.id == ADMIN_ID)
-async def cmd_go(message: types.Message):
-    # Разбиваем текст сообщения: /go (0), id (1), сообщение (2+)
-    parts = message.text.split(maxsplit=2)
-    
-    if len(parts) < 3:
-        return await message.answer("❌ Ошибка! Формат: <code>/go {ID} {сообщение}</code>", parse_mode=ParseMode.HTML)
-    
-    target_id = parts[1]
-    text_to_send = parts[2]
-    
-    if not target_id.isdigit():
-        return await message.answer("❌ Ошибка! ID должен состоять только из цифр.")
+    await message.answer("✅ Принято", reply_markup=main_menu())
+    await state.clear()
 
-    try:
-        await bot.send_message(
-            chat_id=int(target_id),
-            text=f"<b>📩 Сообщение от администратора:</b>\n\n{text_to_send}",
-            parse_mode=ParseMode.HTML
-        )
-        await message.answer(f"✅ Сообщение успешно отправлено пользователю <code>{target_id}</code>")
-    except Exception as e:
-        await message.answer(f"❌ Не удалось отправить сообщение.\nОшибка: {e}")
+# ================== АДМИНКА ==================
+
+@dp.message(Command("admin"), F.from_user.id == ADMIN_ID)
+async def admin(message: types.Message):
+    await message.answer("Админ-панель:", reply_markup=admin_menu())
+
+@dp.message(F.text == "➕ Добавить ID обучающего", F.from_user.id == ADMIN_ID)
+async def add_trainer_start(message: types.Message, state: FSMContext):
+    await message.answer("Введи ID:", reply_markup=ReplyKeyboardRemove())
+    await state.set_state(AdminAddTrainerState.waiting_for_id)
+
+@dp.message(AdminAddTrainerState.waiting_for_id, F.from_user.id == ADMIN_ID)
+async def add_trainer_finish(message: types.Message, state: FSMContext):
+    if not message.text.isdigit():
+        return await message.answer("❌ Только цифры")
+
+    ids = load_allowed_trainers()
+    if message.text in ids:
+        return await message.answer("⚠️ Уже есть")
+
+    ids.append(message.text)
+    save_json(ALLOWED_TRAINERS_FILE, ids)
+
+    await message.answer("✅ ID добавлен", reply_markup=admin_menu())
+    await state.clear()
 
 @dp.message(F.text == "Добавить ссылки", F.from_user.id == ADMIN_ID)
-async def ask_links(message: types.Message, state: FSMContext):
-    await message.answer("Пришлите список. Формат:\n<code>5 поток - №96: https://...</code>", parse_mode=ParseMode.HTML)
+async def add_links(message: types.Message, state: FSMContext):
+    await message.answer("Формат: №10: https://...")
     await state.set_state(AdminState.waiting_for_links)
 
 @dp.message(AdminState.waiting_for_links, F.from_user.id == ADMIN_ID)
-async def process_bulk_links(message: types.Message, state: FSMContext):
-    lines = message.text.split('\n')
-    links_db = load_json(LINKS_FILE)
+async def save_links(message: types.Message, state: FSMContext):
+    lines = message.text.split("\n")
+    links = load_json(LINKS_FILE)
     count = 0
-    
-    for line in lines:
-        if ":" in line:
-            parts = line.split(":", 1)
-            # Извлекаем только число после знака №
-            num_match = re.search(r'№(\d+)', parts[0])
-            if num_match:
-                num_key = num_match.group(1)
-                url = parts[1].strip()
-                if url.startswith("http"):
-                    links_db[num_key] = url
-                    count += 1
-    
-    save_json(LINKS_FILE, links_db)
-    await message.answer(f"Успешно добавлено номеров: <b>{count}</b>", reply_markup=admin_menu(), parse_mode=ParseMode.HTML)
+
+    for l in lines:
+        m = re.search(r'№(\d+):\s*(http\S+)', l)
+        if m:
+            links[m.group(1)] = m.group(2)
+            count += 1
+
+    save_json(LINKS_FILE, links)
+    await message.answer(f"Добавлено: {count}", reply_markup=admin_menu())
     await state.clear()
 
 @dp.message(F.text == "Очистить ссылки", F.from_user.id == ADMIN_ID)
-async def clear_all_links(message: types.Message):
+async def clear(message: types.Message):
     save_json(LINKS_FILE, {})
     save_json(DB_FILE, {})
-    await message.answer("Все базы данных очищены.")
+    await message.answer("Очищено")
 
-# --- Рассылка статистики и поддержка ---
-
-@dp.message(F.from_user.id == ADMIN_ID, F.photo)
-async def admin_send_stats(message: types.Message):
-    """Отправка статистики: фото + код сессии в описании"""
-    if not message.caption:
-        return await message.answer("❌ Напишите код сессии в подписи к фото.")
-
-    user_db = load_json(DB_FILE)
-    code = message.caption.strip().lower()
-    target_user_id = None
-
-    for key, data in user_db.items():
-        if key == code or key.startswith(f"{code}_"):
-            target_user_id = data['user_id']
-            break
-
-    if target_user_id:
-        try:
-            await bot.send_photo(
-                target_user_id,
-                message.photo[-1].file_id,
-                caption="<b>📊 Вам пришла статистика!</b>",
-                parse_mode=ParseMode.HTML
-            )
-            await message.answer(f"✅ Статистика по коду <code>{code}</code> отправлена.")
-        except Exception as e:
-            await message.answer(f"❌ Ошибка отправки: {e}")
-    else:
-        await message.answer(f"❌ Код <code>{code}</code> не найден в базе.")
+# ================== SUPPORT ==================
 
 @dp.message(F.text == "Создать обращение")
-async def support_start(message: types.Message):
-    await message.answer("Напишите ваш вопрос ниже 👇")
+async def support(message: types.Message):
+    await message.answer("Напиши сообщение:")
 
-@dp.message(F.chat.type == "private", F.from_user.id != ADMIN_ID, ~F.text.in_(["ПОЛУЧИТЬ ССЫЛКИ", "Создать обращение", "🏠 Главное меню"]))
+@dp.message(F.chat.type == "private", F.from_user.id != ADMIN_ID)
 async def to_admin(message: types.Message):
-    info = f"<b>💬 ВОПРОС</b>\nID: <code>{message.from_user.id}</code>\n👤 @{message.from_user.username}\n\n"
-    await bot.send_message(ADMIN_ID, info + message.text, parse_mode=ParseMode.HTML)
+    await bot.send_message(
+        ADMIN_ID,
+        f"💬 ВОПРОС\nID: {message.from_user.id}\n@{message.from_user.username}\n\n{message.text}"
+    )
 
-@dp.message(F.from_user.id == ADMIN_ID, F.reply_to_message)
-async def from_admin(message: types.Message):
-    try:
-        user_id = int(re.search(r'ID:\s*(\d+)', message.reply_to_message.text).group(1))
-        await bot.send_message(user_id, f"<b>👨‍💻 ОТВЕТ:</b>\n\n{message.text}", parse_mode=ParseMode.HTML)
-    except: pass
+# ================== RUN ==================
 
 async def main():
     await dp.start_polling(bot)
