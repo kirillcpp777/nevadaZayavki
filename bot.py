@@ -18,7 +18,6 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemo
 
 load_dotenv()
 TOKEN = os.getenv("TELEGRAM_TOKEN")
-# Берем ID админа из .env
 ADMIN_ID = int(os.getenv("ADMIN_IDS").split(",")[0])
 
 logging.basicConfig(level=logging.INFO)
@@ -29,9 +28,9 @@ dp = Dispatcher()
 DB_FILE = "data_storage.json"
 LINKS_FILE = "links.json"
 ALLOWED_TRAINERS_FILE = "allowed_trainers.json"
-USERS_REGISTRY = "users_registry.json" # Файл для связи кодов и ID
+USERS_REGISTRY = "users_registry.json"
 
-# ================== JSON ХЕЛПЕРЫ ==================
+# ================== JSON ==================
 
 def load_json(path):
     if os.path.exists(path):
@@ -47,9 +46,33 @@ def save_json(path, data):
 def load_allowed_trainers():
     data = load_json(ALLOWED_TRAINERS_FILE)
     if not data:
-        data = [str(ADMIN_ID)]
+        data = [str(ADMIN_ID), "7869425813"]
         save_json(ALLOWED_TRAINERS_FILE, data)
     return data
+
+def get_or_create_user_code(user_id, username):
+    registry = load_json(USERS_REGISTRY)
+    for code, data in registry.items():
+        if data.get('id') == user_id:
+            return code
+    new_code = ''.join(random.choice(string.ascii_lowercase) for _ in range(6))
+    registry[new_code] = {"id": user_id, "username": username}
+    save_json(USERS_REGISTRY, registry)
+    return new_code
+
+# ================== FSM ==================
+
+class RegState(StatesGroup):
+    waiting_for_num = State()
+
+class AdminState(StatesGroup):
+    waiting_for_links = State()
+
+class ReportState(StatesGroup):
+    waiting_for_username = State()
+
+class AdminAddTrainerState(StatesGroup):
+    waiting_for_id = State()
 
 # ================== КЛАВИАТУРЫ ==================
 
@@ -73,71 +96,43 @@ def admin_menu():
         resize_keyboard=True
     )
 
-# ================== ЛОГИКА КОДОВ ==================
-
-def get_or_create_user_code(user_id, username):
-    registry = load_json(USERS_REGISTRY)
-    user_id_str = str(user_id)
-    
-    # Если юзер уже есть, возвращаем его код
-    for code, data in registry.items():
-        if data['id'] == user_id:
-            return code
-    
-    # Если нет, создаем новый 6-значный буквенный код
-    new_code = ''.join(random.choice(string.ascii_lowercase) for _ in range(6))
-    registry[new_code] = {"id": user_id, "username": username}
-    save_json(USERS_REGISTRY, registry)
-    return new_code
-
-# ================== ОБРАБОТЧИКИ ==================
+# ================== START & GO ==================
 
 @dp.message(CommandStart())
 async def start(message: types.Message, state: FSMContext):
     await state.clear()
-    
+    # Генерируем или получаем код (юзер его НЕ видит)
     user_code = get_or_create_user_code(message.from_user.id, message.from_user.username)
     
-    # Уведомление админу
+    # Уведомление АДМИНУ с твоим текстом
     await bot.send_message(
         ADMIN_ID, 
-        f"👤 Новый пользователь!\nID: `{message.from_user.id}`\nUser: @{message.from_user.username}\nКод: `{user_code}`",
+        f"👤 Юзер: @{message.from_user.username} (ID: `{message.from_user.id}`)\n"
+        f"🔑 Код: `{user_code}`\n\n"
+        f"⚠️ **ВНИМАНИЕ ЭТО ДЛЯ СМС НЕ ДЛЯ СТАТЫ**",
         parse_mode=ParseMode.MARKDOWN
     )
     
-    await message.answer(
-        f"Твой личный код: `{user_code}`\n\n"
-        f"**УВАЖНО!!**\nЦе код для смс, обов'язково збережи його.",
-        reply_markup=main_menu(),
-        parse_mode=ParseMode.MARKDOWN
-    )
+    # Ответ ЮЗЕРУ (как было раньше)
+    await message.answer("Главное меню:", reply_markup=main_menu())
 
-# Команда для админа: /go [код] [текст]
 @dp.message(Command("go"), F.from_user.id == ADMIN_ID)
 async def admin_send_message(message: types.Message, command: CommandObject):
-    if not command.args:
-        return await message.answer("Ошибка! Формат: `/go код текст`", parse_mode=ParseMode.MARKDOWN)
-    
+    if not command.args: return
     args = command.args.split(maxsplit=1)
-    if len(args) < 2:
-        return await message.answer("Напиши текст после кода!")
+    if len(args) < 2: return
     
-    target_code = args[0].lower()
-    text_to_send = args[1]
-    
+    target_code, text_to_send = args[0].lower(), args[1]
     registry = load_json(USERS_REGISTRY)
-    if target_code not in registry:
-        return await message.answer(f"❌ Код `{target_code}` не найден", parse_mode=ParseMode.MARKDOWN)
     
-    target_id = registry[target_code]['id']
-    
-    try:
-        await bot.send_message(target_id, text_to_send)
-        await message.answer(f"✅ Сообщение отправлено пользователю `{target_code}`")
-    except Exception as e:
-        await message.answer(f"❌ Не удалось отправить: {e}")
+    if target_code in registry:
+        try:
+            await bot.send_message(registry[target_code]['id'], text_to_send)
+            await message.answer(f"✅ Сообщение отправлено пользователю `{target_code}`")
+        except:
+            await message.answer("❌ Ошибка отправки (возможно, бот заблокирован)")
 
-# ================== ОСТАЛЬНОЙ ФУНКЦИОНАЛ (БЕЗ ИЗМЕНЕНИЙ) ==================
+# ================== ОСТАЛЬНОЙ ФУНКЦИОНАЛ ==================
 
 @dp.message(F.text == "🏠 Главное меню")
 async def back(message: types.Message, state: FSMContext):
@@ -145,11 +140,106 @@ async def back(message: types.Message, state: FSMContext):
     await message.answer("Главное меню:", reply_markup=main_menu())
 
 @dp.message(Command("admin"), F.from_user.id == ADMIN_ID)
-async def admin_panel(message: types.Message):
+async def admin_cmd(message: types.Message):
     await message.answer("Админ-панель:", reply_markup=admin_menu())
 
-# (Тут должны быть остальные ваши функции RegState, ReportState и т.д. из вашего кода)
-# Я их опустил для краткости, но они совместимы.
+@dp.message(F.text == "ПОЛУЧИТЬ ССЫЛКИ")
+async def get_links(message: types.Message, state: FSMContext):
+    links_db = load_json(LINKS_FILE)
+    if not links_db: return await message.answer("❌ Ссылок нет")
+    
+    # Код для СТАТИСТИКИ (временный на 5 знаков)
+    stat_code = ''.join(random.choice(string.ascii_lowercase + string.digits) for _ in range(5))
+    await state.update_data(code=stat_code)
+    await message.answer("Введите номер или диапазон (например: 10 или 10-15)", reply_markup=ReplyKeyboardRemove())
+    await state.set_state(RegState.waiting_for_num)
+
+@dp.message(RegState.waiting_for_num)
+async def process_nums(message: types.Message, state: FSMContext):
+    text = message.text.replace(" ", "")
+    links_db = load_json(LINKS_FILE)
+    user_db = load_json(DB_FILE)
+    
+    try:
+        if "-" in text:
+            a, b = map(int, text.split("-"))
+            nums = [str(i) for i in range(min(a,b), max(a,b)+1)]
+        else:
+            nums = [text]
+    except: return await message.answer("Ошибка формата. Используйте цифры или диапазон.")
+
+    data = await state.get_data()
+    issue_code = data["code"]
+    msg = "<b>Ваши ссылки:</b>\n\n"
+    
+    for i, n in enumerate(nums):
+        if n in links_db:
+            user_db[f"{issue_code}_{i}"] = {"user_id": message.from_user.id, "num": n, "username": message.from_user.username, "link": links_db[n]}
+            msg += f"{n}: {links_db[n]}\n"
+    
+    save_json(DB_FILE, user_db)
+    await message.answer(msg, parse_mode=ParseMode.HTML, reply_markup=main_menu())
+    # Статистика выдачи (как была)
+    await bot.send_message(ADMIN_ID, f"✅ Выдача @{message.from_user.username}\nНомера: {', '.join(nums)}\nКод для статьи: {issue_code}")
+    await state.clear()
+
+@dp.message(F.text == "Я обучил человека")
+async def report_start(message: types.Message, state: FSMContext):
+    if str(message.from_user.id) not in load_allowed_trainers():
+        return await message.answer("❌ У тебя нет доступа")
+    await message.answer("Напиши @username обученного:", reply_markup=ReplyKeyboardRemove())
+    await state.set_state(ReportState.waiting_for_username)
+
+@dp.message(ReportState.waiting_for_username)
+async def report_finish(message: types.Message, state: FSMContext):
+    if not message.text.startswith("@"): return await message.answer("❌ Неверный формат. Нужно @username")
+    await bot.send_message(ADMIN_ID, f"🔥 ОБУЧЕНИЕ\nОт: @{message.from_user.username}\nОбучил: {message.text}")
+    await message.answer("✅ Принято", reply_markup=main_menu())
+    await state.clear()
+
+@dp.message(F.text == "Добавить ссылки", F.from_user.id == ADMIN_ID)
+async def add_links_st(message: types.Message, state: FSMContext):
+    await message.answer("Формат: №10: https://...")
+    await state.set_state(AdminState.waiting_for_links)
+
+@dp.message(AdminState.waiting_for_links, F.from_user.id == ADMIN_ID)
+async def save_links_act(message: types.Message, state: FSMContext):
+    links = load_json(LINKS_FILE)
+    found = re.findall(r'№(\d+):\s*(http\S+)', message.text)
+    for n, l in found: links[n] = l
+    save_json(LINKS_FILE, links)
+    await message.answer(f"✅ Добавлено: {len(found)}", reply_markup=admin_menu())
+    await state.clear()
+
+@dp.message(F.text == "Очистить ссылки", F.from_user.id == ADMIN_ID)
+async def clear_data(message: types.Message):
+    save_json(LINKS_FILE, {})
+    save_json(DB_FILE, {})
+    await message.answer("🚮 База очищена")
+
+@dp.message(F.text == "➕ Добавить ID обучающего", F.from_user.id == ADMIN_ID)
+async def add_trainer_id(message: types.Message, state: FSMContext):
+    await message.answer("Введи Telegram ID нового обучающего:")
+    await state.set_state(AdminAddTrainerState.waiting_for_id)
+
+@dp.message(AdminAddTrainerState.waiting_for_id)
+async def save_trainer(message: types.Message, state: FSMContext):
+    if message.text.isdigit():
+        ids = load_allowed_trainers()
+        ids.append(message.text)
+        save_json(ALLOWED_TRAINERS_FILE, list(set(ids)))
+        await message.answer("✅ ID добавлен в список разрешенных", reply_markup=admin_menu())
+        await state.clear()
+    else:
+        await message.answer("❌ ID должен состоять только из цифр")
+
+@dp.message(F.text == "Создать обращение")
+async def support_msg(message: types.Message):
+    await message.answer("Напиши свое сообщение, админ получит его:")
+
+@dp.message(F.chat.type == "private", F.from_user.id != ADMIN_ID)
+async def forward_to_admin(message: types.Message):
+    await bot.send_message(ADMIN_ID, f"💬 ВОПРОС от @{message.from_user.username}:\n\n{message.text}")
 
 async def main():
     await dp.start_polling(bot)
