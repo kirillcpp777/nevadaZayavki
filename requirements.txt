@@ -3,3 +3,4 @@ python-dotenv
 gspread
 gspread-asyncio
 google-auth
+psycopg2-binary
