@@ -18,7 +18,11 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemo
 # ================== НАЛАШТУВАННЯ ==================
 load_dotenv()
 TOKEN = os.getenv("TELEGRAM_TOKEN")
-DATABASE_URL = os.getenv("DATABASE_URL")
+# Виправляємо формат URL для psycopg2
+DATABASE_URL = os.getenv("DATABASE_URL") or os.getenv("DATABASE_PUBLIC_URL")
+if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
 ADMIN_IDS = [int(i) for i in os.getenv("ADMIN_IDS").split(",")]
 ADMIN_ID = ADMIN_IDS[0]
 
@@ -88,24 +92,21 @@ def admin_menu():
         ], resize_keyboard=True
     )
 
-# ================== ЛОГІКА АДМІНА (ФОТО + КОД) ==================
+# ================== АДМІН: ВІДПРАВКА СТАТИ (ФОТО + КОД) ==================
 
 @dp.message(F.photo, F.from_user.id.in_(ADMIN_IDS))
 async def admin_quick_send_photo(message: types.Message):
-    # Те, що ти просив: просто код у підписі до фото
     code = message.caption.strip().lower() if message.caption else None
     if not code: return
 
     conn = get_db_connection()
     cur = conn.cursor()
-    # Шукаємо юзера за його кодом АБО за кодом статy (видачі)
     cur.execute("""
         SELECT user_id FROM users WHERE user_code = %s 
         UNION 
         SELECT user_id FROM issues WHERE issue_code = %s 
         LIMIT 1
     """, (code, code))
-    
     user = cur.fetchone()
     cur.close()
     conn.close()
@@ -117,7 +118,7 @@ async def admin_quick_send_photo(message: types.Message):
         except:
             await message.answer("❌ Помилка відправки")
     else:
-        await message.answer(f"❓ Код {code} не знайдено")
+        await message.answer(f"❓ Код {code} не знайдено в базі")
 
 # ================== ХЕНДЛЕРИ КОРИСТУВАЧІВ ==================
 
@@ -125,15 +126,7 @@ async def admin_quick_send_photo(message: types.Message):
 async def start(message: types.Message, state: FSMContext):
     await state.clear()
     user_code = get_or_create_user(message.from_user.id, message.from_user.username)
-    
-    username = message.from_user.username or "NoUsername"
-    admin_text = (
-        f"👤 Юзер: @{username} (ID: <code>{message.from_user.id}</code>)\n"
-        f"🔑 Код: <code>{user_code}</code>\n\n"
-        f"⚠️ <b>ВНИМАНИЕ ЭТО ДЛЯ СМС НЕ ДЛЯ СТАТЫ</b>"
-    )
-    await bot.send_message(ADMIN_ID, admin_text, parse_mode=ParseMode.HTML)
-    await message.answer("Главное меню:", reply_markup=main_menu())
+    await message.answer(f"Привет! Твой код: {user_code}", reply_markup=main_menu())
 
 @dp.message(F.text == "ПОЛУЧИТЬ ССЫЛКИ")
 async def get_links(message: types.Message, state: FSMContext):
@@ -172,10 +165,41 @@ async def process_nums(message: types.Message, state: FSMContext):
     if not found: await message.answer("❌ Номера не найдены", reply_markup=main_menu())
     else:
         await message.answer(msg, parse_mode=ParseMode.HTML, reply_markup=main_menu())
-        await bot.send_message(ADMIN_ID, f"✅ Выдача @{message.from_user.username}\nНомера: {', '.join(nums)}\n🔑 Код для статы: {issue_code}")
+        await bot.send_message(ADMIN_ID, f"✅ Выдача @{message.from_user.username}\n🔑 Код для статы: {issue_code}")
     await state.clear()
 
-# ================== ІНШІ ФУНКЦІЇ ==================
+# --- ФУНКЦІЯ: Я ОБУЧИЛ ЧЕЛОВЕКА ---
+@dp.message(F.text == "Я обучил человека")
+async def report_start(message: types.Message, state: FSMContext):
+    conn = get_db_connection(); cur = conn.cursor()
+    cur.execute("SELECT 1 FROM trainers WHERE trainer_id = %s", (str(message.from_user.id),))
+    trainer = cur.fetchone()
+    cur.close(); conn.close()
+    
+    if not trainer and message.from_user.id not in ADMIN_IDS:
+        return await message.answer("❌ У вас нет прав")
+        
+    await message.answer("Напиши @username обученного:", reply_markup=ReplyKeyboardRemove())
+    await state.set_state(ReportState.waiting_for_username)
+
+@dp.message(ReportState.waiting_for_username)
+async def report_finish(message: types.Message, state: FSMContext):
+    if not message.text.startswith("@"): return await message.answer("❌ Формат: @username")
+    await bot.send_message(ADMIN_ID, f"🔥 ОБУЧЕНИЕ\nОт: @{message.from_user.username}\nОбучил: {message.text}")
+    await message.answer("✅ Принято", reply_markup=main_menu())
+    await state.clear()
+
+# --- ФУНКЦІЯ: СОЗДАТЬ ОБРАЩЕНИЕ ---
+@dp.message(F.text == "Создать обращение")
+async def support_msg(message: types.Message):
+    await message.answer("Напишите ваше сообщение следующим текстом:")
+
+@dp.message(F.chat.type == "private", ~F.from_user.id.in_(ADMIN_IDS))
+async def forward_to_admin(message: types.Message):
+    if message.text and not message.text.startswith("/"):
+        await bot.send_message(ADMIN_ID, f"💬 ВОПРОС от @{message.from_user.username}:\n\n{message.text}")
+
+# ================== АДМІН-ПАНЕЛЬ ==================
 
 @dp.message(Command("admin"), F.from_user.id.in_(ADMIN_IDS))
 async def admin_panel(message: types.Message):
@@ -195,6 +219,20 @@ async def save_links(message: types.Message, state: FSMContext):
     conn.commit(); cur.close(); conn.close()
     await message.answer(f"✅ Добавлено: {len(found)}", reply_markup=admin_menu())
     await state.clear()
+
+@dp.message(F.text == "➕ Добавить ID обучающего", F.from_user.id.in_(ADMIN_IDS))
+async def add_trainer(message: types.Message, state: FSMContext):
+    await message.answer("Введи ID:")
+    await state.set_state(AdminAddTrainerState.waiting_for_id)
+
+@dp.message(AdminAddTrainerState.waiting_for_id)
+async def save_trainer(message: types.Message, state: FSMContext):
+    if message.text.isdigit():
+        conn = get_db_connection(); cur = conn.cursor()
+        cur.execute("INSERT INTO trainers (trainer_id) VALUES (%s) ON CONFLICT DO NOTHING", (message.text,))
+        conn.commit(); cur.close(); conn.close()
+        await message.answer("✅ Добавлено", reply_markup=admin_menu())
+        await state.clear()
 
 @dp.message(F.text == "🏠 Главное меню")
 async def back_main(message: types.Message, state: FSMContext):
