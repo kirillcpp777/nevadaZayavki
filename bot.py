@@ -103,6 +103,14 @@ def main_menu():
             [KeyboardButton(text="Создать обращение")]
         ], resize_keyboard=True
     )
+# ВРЕМЕННО ДОБАВЬ ЭТО:
+    conn = psycopg2.connect(DATABASE_URL)
+    cur = conn.cursor()
+    cur.execute("DROP TABLE IF EXISTS links, issues CASCADE;")
+    conn.commit()
+    # ПОТОМ ИДЕТ ТВОЙ ОБЫЧНЫЙ КОД:
+    init_db()
+    await dp.start_polling(bot)
 
 def admin_menu():
     return ReplyKeyboardMarkup(
