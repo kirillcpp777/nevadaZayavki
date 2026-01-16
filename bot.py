@@ -122,6 +122,7 @@ def main_menu():
 def admin_menu():
     return ReplyKeyboardMarkup(
         keyboard=[
+            [KeyboardButton(text="Список ссылок")], # Новая кнопка
             [KeyboardButton(text="Добавить ссылки"), KeyboardButton(text="Очистить ссылки")],
             [KeyboardButton(text="➕ Добавить ID обучающего")],
             [KeyboardButton(text="🏠 Главное меню")]
@@ -296,6 +297,35 @@ async def admin_panel(message: types.Message):
 async def add_links_st(message: types.Message, state: FSMContext):
     await message.answer("Пришлите список ссылок в формате:\n№10: https://link\n№11: https://link")
     await state.set_state(AdminState.waiting_for_links)
+
+@dp.message(F.text == "Список ссылок", F.from_user.id.in_(ADMIN_IDS))
+async def admin_view_links(message: types.Message):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    # Получаем все ссылки, сортируем по номеру
+    cur.execute("SELECT number, url, is_used FROM links ORDER BY number")
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+
+    if not rows:
+        return await message.answer("📭 В базе пока нет ссылок.")
+
+    response = "📊 <b>Статус всех ссылок:</b>\n\n"
+    
+    for row in rows:
+        status = "🔴 ЗАЙНЯТА" if row['is_used'] else "🟢 СВОБОДНА"
+        # Формируем строку: №10 | СВОБОДНА | ссылка
+        line = f"№{row['number']} | {status}\n🔗 {row['url']}\n\n"
+        
+        # Проверка на длину сообщения (у Телеграм лимит 4096 символов)
+        if len(response + line) > 4000:
+            await message.answer(response, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+            response = ""
+        response += line
+
+    if response:
+        await message.answer(response, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
 @dp.message(AdminState.waiting_for_links)
 async def save_links(message: types.Message, state: FSMContext):
