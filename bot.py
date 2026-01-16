@@ -15,7 +15,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 
-# ================== НАЛАШТУВАННЯ ==================
+# ================== НАСТРОЙКИ ==================
 load_dotenv()
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL") or os.getenv("DATABASE_PUBLIC_URL")
@@ -29,12 +29,11 @@ logging.basicConfig(level=logging.INFO)
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
-# ================== POSTGRESQL ==================
+# ================== БАЗА ДАННЫХ (POSTGRESQL) ==================
 def init_db():
     conn = psycopg2.connect(DATABASE_URL)
     cur = conn.cursor()
     cur.execute("CREATE TABLE IF NOT EXISTS users (user_id BIGINT PRIMARY KEY, username TEXT, user_code TEXT UNIQUE)")
-    # Додано is_used для відстеження вільних номерів
     cur.execute("""
         CREATE TABLE IF NOT EXISTS links (
             number INTEGER PRIMARY KEY, 
@@ -43,7 +42,16 @@ def init_db():
         )
     """)
     cur.execute("CREATE TABLE IF NOT EXISTS trainers (trainer_id TEXT PRIMARY KEY)")
-    cur.execute("CREATE TABLE IF NOT EXISTS issues (id SERIAL PRIMARY KEY, issue_code TEXT, user_id BIGINT, number INTEGER, url TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS issues (
+            id SERIAL PRIMARY KEY, 
+            issue_code TEXT, 
+            user_id BIGINT, 
+            number INTEGER, 
+            url TEXT, 
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
     conn.commit()
     cur.close()
     conn.close()
@@ -67,7 +75,6 @@ def get_or_create_user(user_id, username):
     return code
 
 def get_available_ranges():
-    """Функція для красивого відображення доступних номерів (наприклад 1-10, 15, 20-25)"""
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("SELECT number FROM links WHERE is_used = FALSE ORDER BY number")
@@ -79,16 +86,17 @@ def get_available_ranges():
         return "нет доступных номеров"
 
     ranges = []
-    start = nums[0]
-    for i in range(1, len(nums) + 1):
-        if i == len(nums) or nums[i] != nums[i-1] + 1:
-            end = nums[i-1]
-            ranges.append(f"{start}-{end}" if start != end else f"{start}")
-            if i < len(nums): start = nums[i]
+    if nums:
+        start = nums[0]
+        for i in range(1, len(nums) + 1):
+            if i == len(nums) or nums[i] != nums[i-1] + 1:
+                end = nums[i-1]
+                ranges.append(f"{start}-{end}" if start != end else f"{start}")
+                if i < len(nums): start = nums[i]
     
     return ", ".join(ranges)
 
-# ================== СТАНИ (FSM) ==================
+# ================== СОСТОЯНИЯ (FSM) ==================
 class RegState(StatesGroup):
     waiting_for_num = State()
 
@@ -101,7 +109,7 @@ class ReportState(StatesGroup):
 class AdminAddTrainerState(StatesGroup):
     waiting_for_id = State()
 
-# ================== КЛАВІАТУРИ ==================
+# ================== КЛАВИАТУРЫ ==================
 def main_menu():
     return ReplyKeyboardMarkup(
         keyboard=[
@@ -120,14 +128,17 @@ def admin_menu():
         ], resize_keyboard=True
     )
 
-# ================== АДМІН: ВІДПРАВКА СТАТИ ==================
+# ================== АДМИН: ОТПРАВКА СТАТИСТИКИ (ФОТО ПО КОДУ) ==================
 @dp.message(F.photo, F.from_user.id.in_(ADMIN_IDS))
 async def admin_quick_send_photo(message: types.Message):
+    # Код должен быть в описании под фото (капшн)
     code = message.caption.strip().lower() if message.caption else None
-    if not code: return
+    if not code: 
+        return await message.answer("❌ Напишите код для статистики в описании к фото!")
 
     conn = get_db_connection()
     cur = conn.cursor()
+    # Ищем в базе: либо по личному коду юзера, либо по коду конкретной выдачи
     cur.execute("""
         SELECT user_id FROM users WHERE user_code = %s 
         UNION 
@@ -140,19 +151,37 @@ async def admin_quick_send_photo(message: types.Message):
 
     if user:
         try:
-            await bot.send_photo(user['user_id'], message.photo[-1].file_id)
-            await message.answer(f"✅ Фото відправлено коду: {code}")
-        except:
-            await message.answer("❌ Помилка відправки (можливо юзер заблокував бота)")
+            await bot.send_photo(
+                user['user_id'], 
+                message.photo[-1].file_id,
+                caption=f"✅ Статистика по коду <code>{code}</code> принята!",
+                parse_mode=ParseMode.HTML
+            )
+            await message.answer(f"✅ Фото успешно отправлено пользователю по коду: {code}")
+        except Exception:
+            await message.answer("❌ Ошибка отправки (возможно, пользователь заблокировал бота)")
     else:
-        await message.answer(f"❓ Код {code} не знайдено")
+        await message.answer(f"❓ Код {code} не найден в базе")
 
-# ================== ХЕНДЛЕРИ КОРИСТУВАЧІВ ==================
+# ================== ХЕНДЛЕРЫ ПОЛЬЗОВАТЕЛЕЙ ==================
 @dp.message(CommandStart())
 async def start(message: types.Message, state: FSMContext):
     await state.clear()
-    user_code = get_or_create_user(message.from_user.id, message.from_user.username)
-    await message.answer(f"Привет! Твой код: {user_code}", reply_markup=main_menu())
+    # Мы всё равно регистрируем юзера в базе (скрыто), чтобы он мог работать
+    get_or_create_user(message.from_user.id, message.from_user.username)
+    
+    welcome_text = (
+        f"🌵 <b>Привет! Это бот NEVADA TRAFFIC</b>\n\n"
+        f"Я твой главный инструмент для работы с трафиком. "
+        f"Здесь ты можешь получить актуальные ссылки, сдать отчет об обучении и связаться с админом.\n\n"
+        f"<b>Выбери нужное действие в меню ниже:</b>"
+    )
+    
+    await message.answer(
+        welcome_text, 
+        reply_markup=main_menu(), 
+        parse_mode=ParseMode.HTML
+    )
 
 @dp.message(F.text == "ПОЛУЧИТЬ ССЫЛКИ")
 async def get_links_start(message: types.Message, state: FSMContext):
@@ -160,6 +189,7 @@ async def get_links_start(message: types.Message, state: FSMContext):
     if available == "нет доступных номеров":
         return await message.answer("❌ Ссылок больше нет (все выданы).")
     
+    # Генерация временного кода для этой конкретной выдачи
     stat_code = ''.join(random.choice(string.ascii_lowercase + string.digits) for _ in range(5))
     await state.update_data(code=stat_code)
     
@@ -180,7 +210,7 @@ async def process_nums(message: types.Message, state: FSMContext):
             nums = list(range(min(a, b), max(a, b) + 1))
         else:
             nums = [int(text)]
-    except:
+    except ValueError:
         return await message.answer("Ошибка формата. Введите число (10) или диапазон (10-20)")
 
     data = await state.get_data()
@@ -209,9 +239,16 @@ async def process_nums(message: types.Message, state: FSMContext):
         await message.answer("❌ Эти номера уже выданы или не существуют.", reply_markup=main_menu())
     else:
         await message.answer(msg, parse_mode=ParseMode.HTML, reply_markup=main_menu())
-        await bot.send_message(ADMIN_ID, f"✅ Выдача @{message.from_user.username}\n🔑 Код для статы: {issue_code}")
         
-        # Повідомляємо що залишилось
+        # УВЕДОМЛЕНИЕ АДМИНУ (ТО, ЧТО ТЫ ПРОСИЛ)
+        admin_notif = (
+            f"👤 <b>Пользователь:</b> @{message.from_user.username} (ID: <code>{message.from_user.id}</code>)\n"
+            f"🔢 <b>Взял номера:</b> {text}\n"
+            f"🔑 <b>Код для статистики:</b> <code>{issue_code}</code>"
+        )
+        await bot.send_message(ADMIN_ID, admin_notif, parse_mode=ParseMode.HTML)
+        
+        # Сообщаем, что осталось в базе
         new_avail = get_available_ranges()
         await message.answer(f"📊 Остались свободные номера: {new_avail}")
         
@@ -219,47 +256,52 @@ async def process_nums(message: types.Message, state: FSMContext):
 
 @dp.message(F.text == "Я обучил человека")
 async def report_start(message: types.Message, state: FSMContext):
-    conn = get_db_connection(); cur = conn.cursor()
+    conn = get_db_connection()
+    cur = conn.cursor()
     cur.execute("SELECT 1 FROM trainers WHERE trainer_id = %s", (str(message.from_user.id),))
     trainer = cur.fetchone()
-    cur.close(); conn.close()
+    cur.close()
+    conn.close()
     
     if not trainer and message.from_user.id not in ADMIN_IDS:
-        return await message.answer("❌ У вас нет прав")
+        return await message.answer("❌ У вас нет прав доступа.")
         
-    await message.answer("Напиши @username обученного:", reply_markup=ReplyKeyboardRemove())
+    await message.answer("Напишите @username обученного пользователя:", reply_markup=ReplyKeyboardRemove())
     await state.set_state(ReportState.waiting_for_username)
 
 @dp.message(ReportState.waiting_for_username)
 async def report_finish(message: types.Message, state: FSMContext):
-    if not message.text.startswith("@"): return await message.answer("❌ Формат: @username")
-    await bot.send_message(ADMIN_ID, f"🔥 ОБУЧЕНИЕ\nОт: @{message.from_user.username}\nОбучил: {message.text}")
-    await message.answer("✅ Принято", reply_markup=main_menu())
+    if not message.text.startswith("@"): 
+        return await message.answer("❌ Ошибка! Формат должен быть: @username")
+        
+    await bot.send_message(ADMIN_ID, f"🔥 <b>НОВОЕ ОБУЧЕНИЕ</b>\nОт: @{message.from_user.username}\nОбучил: {message.text}", parse_mode=ParseMode.HTML)
+    await message.answer("✅ Отчет принят", reply_markup=main_menu())
     await state.clear()
 
 @dp.message(F.text == "Создать обращение")
 async def support_msg(message: types.Message):
-    await message.answer("Просто напишите ваше сообщение боту, и админ его получит.")
+    await message.answer("Просто напишите ваше сообщение боту, и администратор его получит.")
 
 @dp.message(F.chat.type == "private", ~F.from_user.id.in_(ADMIN_IDS))
 async def forward_to_admin(message: types.Message):
     if message.text and not message.text.startswith("/"):
-        await bot.send_message(ADMIN_ID, f"💬 ВОПРОС от @{message.from_user.username}:\n\n{message.text}")
+        await bot.send_message(ADMIN_ID, f"💬 <b>ВОПРОС</b> от @{message.from_user.username}:\n\n{message.text}", parse_mode=ParseMode.HTML)
 
-# ================== АДМІН-ПАНЕЛЬ ==================
+# ================== АДМИН-ПАНЕЛЬ ==================
 @dp.message(Command("admin"), F.from_user.id.in_(ADMIN_IDS))
 async def admin_panel(message: types.Message):
-    await message.answer("Админ-панель:", reply_markup=admin_menu())
+    await message.answer("🔧 Админ-панель:", reply_markup=admin_menu())
 
 @dp.message(F.text == "Добавить ссылки", F.from_user.id.in_(ADMIN_IDS))
 async def add_links_st(message: types.Message, state: FSMContext):
-    await message.answer("Пришли список в формате:\n№10: https://link\n№11: https://link")
+    await message.answer("Пришлите список ссылок в формате:\n№10: https://link\n№11: https://link")
     await state.set_state(AdminState.waiting_for_links)
 
 @dp.message(AdminState.waiting_for_links)
 async def save_links(message: types.Message, state: FSMContext):
     found = re.findall(r'№(\d+):\s*(http\S+)', message.text)
-    conn = get_db_connection(); cur = conn.cursor()
+    conn = get_db_connection()
+    cur = conn.cursor()
     count = 0
     for n, l in found:
         cur.execute("""
@@ -267,37 +309,45 @@ async def save_links(message: types.Message, state: FSMContext):
             ON CONFLICT (number) DO UPDATE SET url = EXCLUDED.url, is_used = FALSE
         """, (int(n), l))
         count += 1
-    conn.commit(); cur.close(); conn.close()
+    conn.commit()
+    cur.close()
+    conn.close()
     await message.answer(f"✅ Добавлено/Обновлено: {count} ссылок", reply_markup=admin_menu())
     await state.clear()
 
 @dp.message(F.text == "Очистить ссылки", F.from_user.id.in_(ADMIN_IDS))
 async def clear_links(message: types.Message):
-    conn = get_db_connection(); cur = conn.cursor()
+    conn = get_db_connection()
+    cur = conn.cursor()
     cur.execute("DELETE FROM links")
-    conn.commit(); cur.close(); conn.close()
-    await message.answer("🗑 Все ссылки удалены из базы.", reply_markup=admin_menu())
+    conn.commit()
+    cur.close()
+    conn.close()
+    await message.answer("🗑 Все ссылки удалены из базы данных.", reply_markup=admin_menu())
 
 @dp.message(F.text == "➕ Добавить ID обучающего", F.from_user.id.in_(ADMIN_IDS))
 async def add_trainer(message: types.Message, state: FSMContext):
-    await message.answer("Введи Telegram ID пользователя:")
+    await message.answer("Введите Telegram ID пользователя:")
     await state.set_state(AdminAddTrainerState.waiting_for_id)
 
 @dp.message(AdminAddTrainerState.waiting_for_id)
 async def save_trainer(message: types.Message, state: FSMContext):
     if message.text.isdigit():
-        conn = get_db_connection(); cur = conn.cursor()
+        conn = get_db_connection()
+        cur = conn.cursor()
         cur.execute("INSERT INTO trainers (trainer_id) VALUES (%s) ON CONFLICT DO NOTHING", (message.text,))
-        conn.commit(); cur.close(); conn.close()
+        conn.commit()
+        cur.close()
+        conn.close()
         await message.answer("✅ Пользователь добавлен в список обучающих", reply_markup=admin_menu())
         await state.clear()
     else:
-        await message.answer("ID должен состоять только из цифр.")
+        await message.answer("❌ ID должен состоять только из цифр.")
 
 @dp.message(F.text == "🏠 Главное меню")
 async def back_main(message: types.Message, state: FSMContext):
     await state.clear()
-    await message.answer("Вы вернулись в меню:", reply_markup=main_menu())
+    await message.answer("Вы вернулись в главное меню:", reply_markup=main_menu())
 
 async def main():
     init_db()
