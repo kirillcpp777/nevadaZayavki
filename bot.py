@@ -190,8 +190,20 @@ async def get_links_start(message: types.Message, state: FSMContext):
     if available == "нет доступных номеров":
         return await message.answer("❌ Ссылок больше нет (все выданы).")
     
-    # Генерация временного кода для этой конкретной выдачи
-    stat_code = ''.join(random.choice(string.ascii_lowercase + string.digits) for _ in range(5))
+    # Отримуємо постійний код користувача з бази
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT user_code FROM users WHERE user_id = %s", (message.from_user.id,))
+    user_row = cur.fetchone()
+    cur.close()
+    conn.close()
+
+    # Якщо раптом юзера немає в базі (хоча start його реєструє), створюємо код на місці
+    if user_row:
+        stat_code = user_row['user_code']
+    else:
+        stat_code = get_or_create_user(message.from_user.id, message.from_user.username)
+
     await state.update_data(code=stat_code)
     
     await message.answer(
@@ -215,7 +227,7 @@ async def process_nums(message: types.Message, state: FSMContext):
         return await message.answer("Ошибка формата. Введите число (10) или диапазон (10-20)")
 
     data = await state.get_data()
-    issue_code = data["code"]
+    issue_code = data["code"] # Тепер це персональний код юзера
     conn = get_db_connection()
     cur = conn.cursor()
     
@@ -241,15 +253,14 @@ async def process_nums(message: types.Message, state: FSMContext):
     else:
         await message.answer(msg, parse_mode=ParseMode.HTML, reply_markup=main_menu())
         
-        # УВЕДОМЛЕНИЕ АДМИНУ (ТО, ЧТО ТЫ ПРОСИЛ)
+        # ПОВІДОМЛЕННЯ АДМІНУ (Тепер з постійним кодом)
         admin_notif = (
             f"👤 <b>Пользователь:</b> @{message.from_user.username} (ID: <code>{message.from_user.id}</code>)\n"
             f"🔢 <b>Взял номера:</b> {text}\n"
-            f"🔑 <b>Код для статистики:</b> <code>{issue_code}</code>"
+            f"🔑 <b>Личный код:</b> <code>{issue_code}</code>"
         )
         await bot.send_message(ADMIN_ID, admin_notif, parse_mode=ParseMode.HTML)
         
-        # Сообщаем, что осталось в базе
         new_avail = get_available_ranges()
         await message.answer(f"📊 Остались свободные номера: {new_avail}")
         
